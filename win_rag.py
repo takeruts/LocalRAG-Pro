@@ -1,6 +1,7 @@
 import customtkinter as ctk
 import os, sys, threading, gc, subprocess, time, ctypes
 from tkinter import filedialog, messagebox
+import requests
 
 # --- 高DPIディスプレイ対応 ---
 try:
@@ -77,7 +78,6 @@ class RAGWinApp(ctk.CTk):
         self.model_option = ctk.CTkOptionMenu(self.sidebar, values=["Multilingual-E5-Small", "PLamo-Embedding-1B"], font=self.font_main)
         self.model_option.pack(pady=5, padx=20, fill="x")
 
-        # リランカー切り替え
         self.rerank_switch = ctk.CTkSwitch(self.sidebar, text="リランカー(高精度)を使用", font=self.font_main)
         self.rerank_switch.select()
         self.rerank_switch.pack(pady=10)
@@ -168,8 +168,19 @@ class RAGWinApp(ctk.CTk):
         try:
             embed_model = "intfloat/multilingual-e5-small" if "E5" in self.model_option.get() else "pfnet/plamo-embedding-1b"
             db_dir = os.path.join(BASE_DB_DIR, "e5" if "E5" in self.model_option.get() else "plamo")
-            embeddings = HuggingFaceEmbeddings(model_name=embed_model, cache_folder=MODELS_DIR, model_kwargs={'device': 'cpu', 'trust_remote_code': True})
             
+            self.after(0, lambda: self.file_name_label.configure(text="⏳ モデルをロード/確認中...", text_color="#AAAAAA"))
+            try:
+                embeddings = HuggingFaceEmbeddings(
+                    model_name=embed_model, 
+                    cache_folder=MODELS_DIR, 
+                    model_kwargs={'device': 'cpu', 'trust_remote_code': True}
+                )
+            except Exception as e:
+                err_msg = f"モデルの取得に失敗しました。プロキシ設定を確認してください。\n{str(e)}"
+                self.after(0, lambda m=err_msg: self.show_error_and_reset(m))
+                return
+
             indexed_files = set()
             if os.path.exists(db_dir):
                 tmp_db = Chroma(persist_directory=db_dir, embedding_function=embeddings)
@@ -239,10 +250,17 @@ class RAGWinApp(ctk.CTk):
             self.after(0, lambda: self.btn_scan.configure(state="normal"))
             self.after(0, lambda: self.btn_stop.configure(state="disabled"))
 
+    def show_error_and_reset(self, msg):
+        messagebox.showerror("Network/Model Error", msg)
+        self.update_chat("Error", msg)
+        self.btn_scan.configure(state="normal")
+        self.btn_stop.configure(state="disabled")
+        self.file_name_label.configure(text="中断されました", text_color="#EF5350")
+
     def ui_loading(self, c, t, p, n):
         self.load_label.configure(text=f"Loading: {c} / {t} ({p}%)")
         self.p_bar.set(c / t)
-        self.file_name_label.configure(text=f"📄 {n}")
+        self.file_name_label.configure(text=f"📄 {n}", text_color="#64B5F6")
 
     def ui_db(self, d, t, p):
         self.db_label.configure(text=f"DB登録: {d} / {t} ({p}%)")
@@ -257,39 +275,61 @@ class RAGWinApp(ctk.CTk):
         self.source_buttons = []
         threading.Thread(target=self.rag_task, args=(query,), daemon=True).start()
 
-    # --- Reranker 統合済み RAG タスク ---
     def rag_task(self, query):
         try:
-            self.update_chat("Assistant", "資料を検索中...")
+            self.after(0, lambda: self.update_chat("Assistant", "資料を検索中..."))
             embed_model = "intfloat/multilingual-e5-small" if "E5" in self.model_option.get() else "pfnet/plamo-embedding-1b"
             db_dir = os.path.join(BASE_DB_DIR, "e5" if "E5" in self.model_option.get() else "plamo")
-            embeddings = HuggingFaceEmbeddings(model_name=embed_model, cache_folder=MODELS_DIR, model_kwargs={'trust_remote_code': True})
-            db = Chroma(persist_directory=db_dir, embedding_function=embeddings)
             
-            # 1. まずベクトル検索で上位10件を広く取る
+            try:
+                embeddings = HuggingFaceEmbeddings(
+                    model_name=embed_model, 
+                    cache_folder=MODELS_DIR, 
+                    model_kwargs={'trust_remote_code': True}
+                )
+                db = Chroma(persist_directory=db_dir, embedding_function=embeddings)
+            except Exception as e:
+                self.after(0, lambda: self.update_chat("Error", f"Embeddingロード失敗: {str(e)}"))
+                return
+
             initial_k = 10 if (self.rerank_switch.get() and HAS_RERANKER) else 3
             docs = db.as_retriever(search_kwargs={"k": initial_k}).invoke(query)
 
-            # 2. リランカーによる再ランキング
             if self.rerank_switch.get() and HAS_RERANKER:
-                self.update_chat("Assistant", "リランク中 (内容を精査しています)...")
-                reranker = CrossEncoder("BAAI/bge-reranker-base", device='cpu')
-                pairs = [[query, d.page_content] for d in docs]
-                scores = reranker.predict(pairs)
-                # スコア順にソートして上位3件を厳選
-                docs = [d for _, d in sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)[:3]]
+                self.after(0, lambda: self.update_chat("Assistant", "リランカーを準備中 (初回はDL発生)..."))
+                try:
+                    # リランカーもMODELS_DIRにキャッシュさせる設定
+                    reranker = CrossEncoder(
+                        "BAAI/bge-reranker-base", 
+                        device='cpu',
+                        cache_dir=MODELS_DIR  # 直接 cache_dir を指定します
+                    )
+                    self.after(0, lambda: self.update_chat("Assistant", "内容を精査中..."))
+                    pairs = [[query, d.page_content] for d in docs]
+                    scores = reranker.predict(pairs)
+                    docs = [d for _, d in sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)[:3]]
+                except Exception as e:
+                    self.after(0, lambda: self.update_chat("Error", f"リランカーの失敗: {str(e)}"))
+                    # リランカーが失敗しても、通常の検索結果で続行
+                    docs = docs[:3]
 
             context = "\n\n".join([f"【出典: {os.path.basename(d.metadata.get('source',''))}】\n{d.page_content}" for d in docs])
-            llm = Ollama(model="gemma3:4b")
-            prompt = ChatPromptTemplate.from_template("資料を参考に日本語で答えてください。\n資料:\n{context}\n\n質問: {question}")
-            chain = prompt | llm | StrOutputParser()
-            res = chain.invoke({"context": context, "question": query})
-            self.update_chat("Assistant", res)
+            
+            try:
+                llm = Ollama(model="gemma3:4b")
+                prompt = ChatPromptTemplate.from_template("資料を参考に日本語で答えてください。\n資料:\n{context}\n\n質問: {question}")
+                chain = prompt | llm | StrOutputParser()
+                res = chain.invoke({"context": context, "question": query})
+                self.after(0, lambda r=res: self.update_chat("Assistant", r))
+            except Exception as e:
+                self.after(0, lambda: self.update_chat("Error", f"Ollamaエラー。起動を確認してください。\n{str(e)}"))
+                return
+
             for d in docs:
                 p, pg = d.metadata.get("source"), d.metadata.get("page")
                 self.after(0, lambda f=p, g=pg: self.add_source_button(f, g))
         except Exception as e:
-            self.update_chat("Error", str(e))
+            self.after(0, lambda: self.update_chat("Error", str(e)))
 
     def add_source_button(self, file_path, page_num=None):
         fname = os.path.basename(file_path)

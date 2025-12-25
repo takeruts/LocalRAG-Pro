@@ -60,6 +60,10 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+3. **Pythonの入出力をUTF-8に強制**:
+```powershell
+$env:PYTHONUTF8 = "1"
+```
 ---
 
 ## 🌐 Proxy Settings / 社内ネットワーク環境での設定
@@ -76,7 +80,10 @@ $env:HTTPS_PROXY="http://your-proxy-server:port"
 # ローカルバイパス用（Ollamaとの通信に必須）
 $env:NO_PROXY="localhost,127.0.0.1"
 ```
-
+同じシェルから、LcalRAG_Pro を実行 
+```powershell
+./LocalRAG_Pro.exe
+```
 ---
 
 ## 🛠️ How to Build / 実行ファイルの作成方法

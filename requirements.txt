@@ -15,6 +15,12 @@ unstructured[xlsx]
 
 # --- Vector Database ---
 chromadb
+fastapi
+einops
+uvicorn
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-instrumentation-fastapi
 
 # --- AI Models / Embeddings ---
 sentence-transformers
@@ -27,3 +33,4 @@ ollama
 # --- Utils ---
 requests
 urllib3
+

@@ -7,3 +7,5 @@ dist/
 build/
 *.spec
 .env
+proxy*
+LocalRAG_Pro.zip
