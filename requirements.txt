@@ -1,0 +1,29 @@
+# --- GUI ---
+customtkinter
+
+# --- LangChain Core ---
+langchain
+langchain-community
+langchain-core
+langchain-huggingface
+langchain-text-splitters
+
+# --- Document Loaders ---
+pymupdf
+docx2txt
+unstructured[xlsx]
+
+# --- Vector Database ---
+chromadb
+
+# --- AI Models / Embeddings ---
+sentence-transformers
+huggingface-hub
+hf-transfer
+
+# --- LLM Interface ---
+ollama
+
+# --- Utils ---
+requests
+urllib3

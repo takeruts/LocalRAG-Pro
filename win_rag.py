@@ -1,0 +1,303 @@
+import customtkinter as ctk
+import os, sys, threading, gc, subprocess, time, ctypes
+from tkinter import filedialog, messagebox
+
+# --- 高DPIディスプレイ対応 ---
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+except:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except:
+        pass
+
+# --- AI関連ライブラリ ---
+from langchain_community.document_loaders import PyMuPDFLoader, TextLoader, Docx2txtLoader, UnstructuredExcelLoader
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.llms import Ollama
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
+# リランカー用
+try:
+    from sentence_transformers import CrossEncoder
+    HAS_RERANKER = True
+except ImportError:
+    HAS_RERANKER = False
+
+# --- パス解決 & 環境変数 ---
+frozen = getattr(sys, 'frozen', False)
+current_dir = os.path.dirname(sys.executable) if frozen else os.path.dirname(os.path.abspath(__file__))
+BASE_DB_DIR = os.path.join(current_dir, "chroma_db")
+MODELS_DIR = os.path.join(current_dir, "models")
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
+for d in [BASE_DB_DIR, MODELS_DIR]:
+    os.makedirs(d, exist_ok=True)
+
+class RAGWinApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+
+        self.stop_requested = False
+        self.is_indexing = False
+        self.folder_path = ""
+        self.source_buttons = []
+        self.error_files = []
+
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("blue")
+        self.font_main = ctk.CTkFont(family="Yu Gothic UI", size=14)
+        self.font_bold = ctk.CTkFont(family="Yu Gothic UI", size=18, weight="bold")
+        self.font_mini = ctk.CTkFont(family="Yu Gothic UI", size=12)
+        self.font_chat = ctk.CTkFont(family="BIZ UDゴシック", size=14)
+
+        self.title("Local RAG Pro - Reranker Integrated")
+        self.geometry("1300x900")
+        
+        self.sidebar_width = 340
+        self.grid_columnconfigure(0, minsize=self.sidebar_width) 
+        self.grid_columnconfigure(1, weight=0)
+        self.grid_columnconfigure(2, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        # --- サイドバー ---
+        self.sidebar = ctk.CTkFrame(self, width=self.sidebar_width, corner_radius=0)
+        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        self.sidebar.grid_propagate(False) 
+        
+        ctk.CTkLabel(self.sidebar, text="設定", font=self.font_bold).pack(pady=(20, 10))
+
+        self.btn_folder = ctk.CTkButton(self.sidebar, text="📁 フォルダ選択", font=self.font_main, corner_radius=10, command=self.select_folder)
+        self.btn_folder.pack(pady=5, padx=20, fill="x")
+
+        self.model_option = ctk.CTkOptionMenu(self.sidebar, values=["Multilingual-E5-Small", "PLamo-Embedding-1B"], font=self.font_main)
+        self.model_option.pack(pady=5, padx=20, fill="x")
+
+        # リランカー切り替え
+        self.rerank_switch = ctk.CTkSwitch(self.sidebar, text="リランカー(高精度)を使用", font=self.font_main)
+        self.rerank_switch.select()
+        self.rerank_switch.pack(pady=10)
+
+        self.btn_scan = ctk.CTkButton(self.sidebar, text="⚡ Indexing 開始/再開", font=self.font_main, fg_color="#1E88E5", command=self.start_scan)
+        self.btn_scan.pack(pady=10, padx=20, fill="x")
+
+        self.btn_stop = ctk.CTkButton(self.sidebar, text="🛑 中断", font=self.font_main, fg_color="#E53935", state="disabled", command=self.request_stop)
+        self.btn_stop.pack(pady=5, padx=20, fill="x")
+
+        self.load_label = ctk.CTkLabel(self.sidebar, text="Ready", font=self.font_mini, text_color="#AAAAAA")
+        self.load_label.pack(pady=(15, 0), padx=20, anchor="w")
+        self.p_bar = ctk.CTkProgressBar(self.sidebar, height=10)
+        self.p_bar.set(0)
+        self.p_bar.pack(pady=5, padx=20, fill="x")
+
+        self.file_name_label = ctk.CTkLabel(self.sidebar, text="", font=self.font_mini, text_color="#64B5F6", wraplength=280, height=45)
+        self.file_name_label.pack(pady=2, padx=20, anchor="w")
+
+        self.error_label = ctk.CTkLabel(self.sidebar, text="", font=self.font_mini, text_color="#EF5350", wraplength=280)
+        self.error_label.pack(pady=2, padx=20, anchor="w")
+
+        self.db_label = ctk.CTkLabel(self.sidebar, text="DB登録: ---", font=self.font_mini, text_color="#FFB74D")
+        self.db_label.pack(pady=(5, 0), padx=20, anchor="w")
+
+        self.source_frame = ctk.CTkScrollableFrame(self.sidebar, label_text="参照資料リスト", fg_color="transparent")
+        self.source_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        self.resizer = ctk.CTkFrame(self, width=4, cursor="sb_h_double_arrow", fg_color="#333333")
+        self.resizer.grid(row=0, column=1, sticky="ns")
+        self.resizer.bind("<B1-Motion>", self.on_resize)
+
+        # チャットエリア
+        self.chat_frame = ctk.CTkFrame(self, fg_color="#121212", corner_radius=15)
+        self.chat_frame.grid(row=0, column=2, padx=15, pady=15, sticky="nsew")
+        self.chat_frame.grid_columnconfigure(0, weight=1)
+        self.chat_frame.grid_rowconfigure(0, weight=1)
+
+        self.chat_display = ctk.CTkTextbox(self.chat_frame, state="disabled", font=self.font_chat, fg_color="#1E1E1E", wrap="word")
+        self.chat_display.grid(row=0, column=0, padx=15, pady=15, sticky="nsew")
+
+        self.input_area = ctk.CTkFrame(self.chat_frame, fg_color="transparent")
+        self.input_area.grid(row=1, column=0, padx=15, pady=15, sticky="ew")
+        self.input_area.grid_columnconfigure(0, weight=1)
+
+        self.entry = ctk.CTkEntry(self.input_area, placeholder_text="AIに質問する...", height=50, corner_radius=12)
+        self.entry.grid(row=0, column=0, sticky="ew")
+        self.entry.bind("<Return>", lambda e: self.send_query())
+
+        self.btn_send = ctk.CTkButton(self.input_area, text="送信", width=100, height=50, command=self.send_query)
+        self.btn_send.grid(row=0, column=1, padx=(12, 0))
+
+    def on_resize(self, event):
+        new_width = event.x_root - self.winfo_rootx()
+        if 180 < new_width < 700:
+            self.sidebar.configure(width=new_width)
+            self.grid_columnconfigure(0, minsize=new_width)
+
+    def select_folder(self):
+        path = filedialog.askdirectory()
+        if path:
+            self.folder_path = os.path.normpath(path)
+            self.update_chat("System", f"フォルダ設定: {self.folder_path}")
+
+    def update_chat(self, sender, text):
+        self.chat_display.configure(state="normal")
+        self.chat_display.insert("end", f"【{sender}】\n{text}\n\n")
+        self.chat_display.configure(state="disabled")
+        self.chat_display.see("end")
+
+    def request_stop(self):
+        self.stop_requested = True
+        self.update_chat("System", "中断リクエスト中...")
+
+    def start_scan(self):
+        if not self.folder_path:
+            messagebox.showwarning("Warning", "フォルダを選択してください")
+            return
+        self.is_indexing = True
+        self.stop_requested = False
+        self.error_files = []
+        self.error_label.configure(text="")
+        self.btn_scan.configure(state="disabled")
+        self.btn_stop.configure(state="normal")
+        threading.Thread(target=self.indexing_task, daemon=True).start()
+
+    def indexing_task(self):
+        try:
+            embed_model = "intfloat/multilingual-e5-small" if "E5" in self.model_option.get() else "pfnet/plamo-embedding-1b"
+            db_dir = os.path.join(BASE_DB_DIR, "e5" if "E5" in self.model_option.get() else "plamo")
+            embeddings = HuggingFaceEmbeddings(model_name=embed_model, cache_folder=MODELS_DIR, model_kwargs={'device': 'cpu', 'trust_remote_code': True})
+            
+            indexed_files = set()
+            if os.path.exists(db_dir):
+                tmp_db = Chroma(persist_directory=db_dir, embedding_function=embeddings)
+                data = tmp_db.get()
+                if data and 'metadatas' in data:
+                    indexed_files = {os.path.normpath(m['source']) for m in data['metadatas'] if m and 'source' in m}
+                del tmp_db
+
+            valid_exts = ('.pdf', '.pptx', '.docx', '.xlsx', '.txt')
+            all_files = [os.path.join(r, f) for r, _, fs in os.walk(self.folder_path) for f in fs if f.lower().endswith(valid_exts)]
+            target_files = [f for f in all_files if os.path.normpath(f) not in indexed_files]
+            
+            if not target_files:
+                self.update_chat("System", "すべて最新です。")
+                return
+
+            docs = []
+            for i, f in enumerate(target_files):
+                if self.stop_requested: break
+                fname = os.path.basename(f)
+                self.after(0, lambda c=i+1, t=len(target_files), p=int(((i+1)/len(target_files))*100), n=fname: self.ui_loading(c, t, p, n))
+                try:
+                    ext = os.path.splitext(f)[1].lower()
+                    if ext == ".pdf": loader = PyMuPDFLoader(f)
+                    elif ext == ".docx": loader = Docx2txtLoader(f)
+                    elif ext == ".txt": loader = TextLoader(f, encoding="utf-8")
+                    elif ext == ".xlsx": loader = UnstructuredExcelLoader(f)
+                    else: continue
+                    docs.extend(loader.load())
+                except Exception:
+                    self.error_files.append(fname)
+                    self.after(0, lambda n=fname: self.error_label.configure(text=f"⚠️ Skip: {n}"))
+                    continue
+
+            if not docs and not self.stop_requested:
+                self.update_chat("System", "処理可能なドキュメントがありませんでした。")
+                return
+
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+            raw_splits = text_splitter.split_documents(docs)
+            for d in raw_splits:
+                d.metadata = {k: (v if isinstance(v, (str, int, float, bool)) else str(v)) if v is not None else "" for k, v in d.metadata.items()}
+
+            db = Chroma(persist_directory=db_dir, embedding_function=embeddings)
+            batch_size = 30
+            for i in range(0, len(raw_splits), batch_size):
+                if self.stop_requested: break
+                try:
+                    batch = raw_splits[i : i + batch_size]
+                    db.add_documents(batch)
+                    done = min(i + batch_size, len(raw_splits))
+                    self.after(0, lambda d=done, t=len(raw_splits), p=int((done/len(raw_splits))*100): self.ui_db(d, t, p))
+                except Exception as e:
+                    self.update_chat("Error", f"バッチ登録エラー: {str(e)}")
+                    continue
+
+            if not self.stop_requested:
+                status_msg = "✅ 完了" if not self.error_files else f"✅ 完了 (スキップ {len(self.error_files)}件)"
+                self.after(0, lambda m=status_msg: self.file_name_label.configure(text=m, text_color="#81C784"))
+                if self.error_files:
+                    self.update_chat("System", f"完了。スキップ: {', '.join(self.error_files)}")
+                else:
+                    self.update_chat("System", "すべてのファイルを登録しました。")
+        except Exception as e:
+            self.update_chat("Error", f"重大エラー: {str(e)}")
+        finally:
+            self.after(0, lambda: self.btn_scan.configure(state="normal"))
+            self.after(0, lambda: self.btn_stop.configure(state="disabled"))
+
+    def ui_loading(self, c, t, p, n):
+        self.load_label.configure(text=f"Loading: {c} / {t} ({p}%)")
+        self.p_bar.set(c / t)
+        self.file_name_label.configure(text=f"📄 {n}")
+
+    def ui_db(self, d, t, p):
+        self.db_label.configure(text=f"DB登録: {d} / {t} ({p}%)")
+        self.p_bar.set(d / t)
+
+    def send_query(self):
+        query = self.entry.get()
+        if not query: return
+        self.entry.delete(0, 'end')
+        self.update_chat("You", query)
+        for b in self.source_buttons: b.destroy()
+        self.source_buttons = []
+        threading.Thread(target=self.rag_task, args=(query,), daemon=True).start()
+
+    # --- Reranker 統合済み RAG タスク ---
+    def rag_task(self, query):
+        try:
+            self.update_chat("Assistant", "資料を検索中...")
+            embed_model = "intfloat/multilingual-e5-small" if "E5" in self.model_option.get() else "pfnet/plamo-embedding-1b"
+            db_dir = os.path.join(BASE_DB_DIR, "e5" if "E5" in self.model_option.get() else "plamo")
+            embeddings = HuggingFaceEmbeddings(model_name=embed_model, cache_folder=MODELS_DIR, model_kwargs={'trust_remote_code': True})
+            db = Chroma(persist_directory=db_dir, embedding_function=embeddings)
+            
+            # 1. まずベクトル検索で上位10件を広く取る
+            initial_k = 10 if (self.rerank_switch.get() and HAS_RERANKER) else 3
+            docs = db.as_retriever(search_kwargs={"k": initial_k}).invoke(query)
+
+            # 2. リランカーによる再ランキング
+            if self.rerank_switch.get() and HAS_RERANKER:
+                self.update_chat("Assistant", "リランク中 (内容を精査しています)...")
+                reranker = CrossEncoder("BAAI/bge-reranker-base", device='cpu')
+                pairs = [[query, d.page_content] for d in docs]
+                scores = reranker.predict(pairs)
+                # スコア順にソートして上位3件を厳選
+                docs = [d for _, d in sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)[:3]]
+
+            context = "\n\n".join([f"【出典: {os.path.basename(d.metadata.get('source',''))}】\n{d.page_content}" for d in docs])
+            llm = Ollama(model="gemma3:4b")
+            prompt = ChatPromptTemplate.from_template("資料を参考に日本語で答えてください。\n資料:\n{context}\n\n質問: {question}")
+            chain = prompt | llm | StrOutputParser()
+            res = chain.invoke({"context": context, "question": query})
+            self.update_chat("Assistant", res)
+            for d in docs:
+                p, pg = d.metadata.get("source"), d.metadata.get("page")
+                self.after(0, lambda f=p, g=pg: self.add_source_button(f, g))
+        except Exception as e:
+            self.update_chat("Error", str(e))
+
+    def add_source_button(self, file_path, page_num=None):
+        fname = os.path.basename(file_path)
+        lbl = f"📄 {fname}" + (f" (P.{page_num+1})" if page_num is not None else "")
+        btn = ctk.CTkButton(self.source_frame, text=lbl, anchor="w", font=self.font_mini, fg_color="#333333", height=32, command=lambda p=file_path: os.startfile(p))
+        btn.pack(fill="x", pady=2)
+        self.source_buttons.append(btn)
+
+if __name__ == "__main__":
+    app = RAGWinApp()
+    app.mainloop()
