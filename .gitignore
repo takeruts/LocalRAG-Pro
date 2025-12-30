@@ -19,6 +19,8 @@ models/
 dist/
 build/
 *.egg-info/
+deploy/
+package/
 
 # PyInstaller自動生成specファイル（カスタムspecは保持）
 # win_rag.spec は保持するためコメントアウト
