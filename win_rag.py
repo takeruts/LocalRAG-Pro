@@ -1,15 +1,17 @@
 import customtkinter as ctk
-import os, sys, threading, gc, subprocess, time, ctypes
+import os
+import sys
+import threading
+import ctypes
 from tkinter import filedialog, messagebox
-import requests
 
 # --- 高DPIディスプレイ対応 ---
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
-except:
+except (AttributeError, OSError):
     try:
         ctypes.windll.user32.SetProcessDPIAware()
-    except:
+    except (AttributeError, OSError):
         pass
 
 # --- AI関連ライブラリ ---
@@ -22,12 +24,10 @@ from langchain_community.llms import Ollama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-# リランカー用
-try:
-    from sentence_transformers import CrossEncoder
-    HAS_RERANKER = True
-except ImportError:
-    HAS_RERANKER = False
+# リランカー用（PyInstallerのために明示的にインポート）
+import sentence_transformers
+from sentence_transformers import CrossEncoder, SentenceTransformer
+HAS_RERANKER = True
 
 # --- パス解決 & 環境変数 ---
 frozen = getattr(sys, 'frozen', False)
@@ -48,6 +48,7 @@ class RAGWinApp(ctk.CTk):
         self.folder_path = ""
         self.source_buttons = []
         self.error_files = []
+        self.ollama_model = "gemma3:4b"  # デフォルトモデル
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
@@ -130,6 +131,29 @@ class RAGWinApp(ctk.CTk):
         self.btn_send = ctk.CTkButton(self.input_area, text="送信", width=100, height=50, command=self.send_query)
         self.btn_send.grid(row=0, column=1, padx=(12, 0))
 
+    def get_model_config(self):
+        """モデル設定を取得する"""
+        is_e5 = "E5" in self.model_option.get()
+        embed_model = "intfloat/multilingual-e5-small" if is_e5 else "pfnet/plamo-embedding-1b"
+        db_dir = os.path.join(BASE_DB_DIR, "e5" if is_e5 else "plamo")
+        return embed_model, db_dir
+
+    def clean_metadata_value(self, v):
+        """メタデータの値をクリーンにする"""
+        if v is None:
+            return ""
+        if isinstance(v, (str, int, float, bool)):
+            return v
+        return str(v)
+
+    def create_embeddings(self, model_name):
+        """Embeddingモデルを作成する"""
+        return HuggingFaceEmbeddings(
+            model_name=model_name,
+            cache_folder=MODELS_DIR,
+            model_kwargs={'device': 'cpu', 'trust_remote_code': True}
+        )
+
     def on_resize(self, event):
         new_width = event.x_root - self.winfo_rootx()
         if 180 < new_width < 700:
@@ -165,17 +189,13 @@ class RAGWinApp(ctk.CTk):
         threading.Thread(target=self.indexing_task, daemon=True).start()
 
     def indexing_task(self):
+        db = None
         try:
-            embed_model = "intfloat/multilingual-e5-small" if "E5" in self.model_option.get() else "pfnet/plamo-embedding-1b"
-            db_dir = os.path.join(BASE_DB_DIR, "e5" if "E5" in self.model_option.get() else "plamo")
-            
+            embed_model, db_dir = self.get_model_config()
+
             self.after(0, lambda: self.file_name_label.configure(text="⏳ モデルをロード/確認中...", text_color="#AAAAAA"))
             try:
-                embeddings = HuggingFaceEmbeddings(
-                    model_name=embed_model, 
-                    cache_folder=MODELS_DIR, 
-                    model_kwargs={'device': 'cpu', 'trust_remote_code': True}
-                )
+                embeddings = self.create_embeddings(embed_model)
             except Exception as e:
                 err_msg = f"モデルの取得に失敗しました。プロキシ設定を確認してください。\n{str(e)}"
                 self.after(0, lambda m=err_msg: self.show_error_and_reset(m))
@@ -201,16 +221,21 @@ class RAGWinApp(ctk.CTk):
             for i, f in enumerate(target_files):
                 if self.stop_requested: break
                 fname = os.path.basename(f)
-                self.after(0, lambda c=i+1, t=len(target_files), p=int(((i+1)/len(target_files))*100), n=fname: self.ui_loading(c, t, p, n))
+                self.after(0, lambda c=i + 1, t=len(target_files), p=int(((i + 1) / len(target_files)) * 100), n=fname: self.ui_loading(c, t, p, n))
                 try:
                     ext = os.path.splitext(f)[1].lower()
-                    if ext == ".pdf": loader = PyMuPDFLoader(f)
-                    elif ext == ".docx": loader = Docx2txtLoader(f)
-                    elif ext == ".txt": loader = TextLoader(f, encoding="utf-8")
-                    elif ext == ".xlsx": loader = UnstructuredExcelLoader(f)
-                    else: continue
+                    if ext == ".pdf":
+                        loader = PyMuPDFLoader(f)
+                    elif ext == ".docx":
+                        loader = Docx2txtLoader(f)
+                    elif ext == ".txt":
+                        loader = TextLoader(f, encoding="utf-8")
+                    elif ext == ".xlsx":
+                        loader = UnstructuredExcelLoader(f)
+                    else:
+                        continue
                     docs.extend(loader.load())
-                except Exception:
+                except Exception as e:
                     self.error_files.append(fname)
                     self.after(0, lambda n=fname: self.error_label.configure(text=f"⚠️ Skip: {n}"))
                     continue
@@ -222,7 +247,7 @@ class RAGWinApp(ctk.CTk):
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
             raw_splits = text_splitter.split_documents(docs)
             for d in raw_splits:
-                d.metadata = {k: (v if isinstance(v, (str, int, float, bool)) else str(v)) if v is not None else "" for k, v in d.metadata.items()}
+                d.metadata = {k: self.clean_metadata_value(v) for k, v in d.metadata.items()}
 
             db = Chroma(persist_directory=db_dir, embedding_function=embeddings)
             batch_size = 30
@@ -232,7 +257,7 @@ class RAGWinApp(ctk.CTk):
                     batch = raw_splits[i : i + batch_size]
                     db.add_documents(batch)
                     done = min(i + batch_size, len(raw_splits))
-                    self.after(0, lambda d=done, t=len(raw_splits), p=int((done/len(raw_splits))*100): self.ui_db(d, t, p))
+                    self.after(0, lambda d=done, t=len(raw_splits), p=int((done / len(raw_splits)) * 100): self.ui_db(d, t, p))
                 except Exception as e:
                     self.update_chat("Error", f"バッチ登録エラー: {str(e)}")
                     continue
@@ -247,6 +272,8 @@ class RAGWinApp(ctk.CTk):
         except Exception as e:
             self.update_chat("Error", f"重大エラー: {str(e)}")
         finally:
+            if db is not None:
+                del db
             self.after(0, lambda: self.btn_scan.configure(state="normal"))
             self.after(0, lambda: self.btn_stop.configure(state="disabled"))
 
@@ -276,17 +303,13 @@ class RAGWinApp(ctk.CTk):
         threading.Thread(target=self.rag_task, args=(query,), daemon=True).start()
 
     def rag_task(self, query):
+        db = None
         try:
             self.after(0, lambda: self.update_chat("Assistant", "資料を検索中..."))
-            embed_model = "intfloat/multilingual-e5-small" if "E5" in self.model_option.get() else "pfnet/plamo-embedding-1b"
-            db_dir = os.path.join(BASE_DB_DIR, "e5" if "E5" in self.model_option.get() else "plamo")
-            
+            embed_model, db_dir = self.get_model_config()
+
             try:
-                embeddings = HuggingFaceEmbeddings(
-                    model_name=embed_model, 
-                    cache_folder=MODELS_DIR, 
-                    model_kwargs={'trust_remote_code': True}
-                )
+                embeddings = self.create_embeddings(embed_model)
                 db = Chroma(persist_directory=db_dir, embedding_function=embeddings)
             except Exception as e:
                 self.after(0, lambda: self.update_chat("Error", f"Embeddingロード失敗: {str(e)}"))
@@ -298,11 +321,10 @@ class RAGWinApp(ctk.CTk):
             if self.rerank_switch.get() and HAS_RERANKER:
                 self.after(0, lambda: self.update_chat("Assistant", "リランカーを準備中 (初回はDL発生)..."))
                 try:
-                    # リランカーもMODELS_DIRにキャッシュさせる設定
                     reranker = CrossEncoder(
-                        "BAAI/bge-reranker-base", 
+                        "BAAI/bge-reranker-base",
                         device='cpu',
-                        cache_dir=MODELS_DIR  # 直接 cache_dir を指定します
+                        cache_dir=MODELS_DIR
                     )
                     self.after(0, lambda: self.update_chat("Assistant", "内容を精査中..."))
                     pairs = [[query, d.page_content] for d in docs]
@@ -310,13 +332,12 @@ class RAGWinApp(ctk.CTk):
                     docs = [d for _, d in sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)[:3]]
                 except Exception as e:
                     self.after(0, lambda: self.update_chat("Error", f"リランカーの失敗: {str(e)}"))
-                    # リランカーが失敗しても、通常の検索結果で続行
                     docs = docs[:3]
 
-            context = "\n\n".join([f"【出典: {os.path.basename(d.metadata.get('source',''))}】\n{d.page_content}" for d in docs])
+            context = "\n\n".join([f"【出典: {os.path.basename(d.metadata.get('source', ''))}】\n{d.page_content}" for d in docs])
             
             try:
-                llm = Ollama(model="gemma3:4b")
+                llm = Ollama(model=self.ollama_model)
                 prompt = ChatPromptTemplate.from_template("資料を参考に日本語で答えてください。\n資料:\n{context}\n\n質問: {question}")
                 chain = prompt | llm | StrOutputParser()
                 res = chain.invoke({"context": context, "question": query})
@@ -330,11 +351,32 @@ class RAGWinApp(ctk.CTk):
                 self.after(0, lambda f=p, g=pg: self.add_source_button(f, g))
         except Exception as e:
             self.after(0, lambda: self.update_chat("Error", str(e)))
+        finally:
+            if db is not None:
+                del db
+
+    def open_file_safely(self, file_path):
+        """ファイルを安全に開く"""
+        if os.path.exists(file_path):
+            try:
+                os.startfile(file_path)
+            except Exception as e:
+                messagebox.showerror("Error", f"ファイルを開けません: {str(e)}")
+        else:
+            messagebox.showerror("Error", "ファイルが見つかりません")
 
     def add_source_button(self, file_path, page_num=None):
         fname = os.path.basename(file_path)
-        lbl = f"📄 {fname}" + (f" (P.{page_num+1})" if page_num is not None else "")
-        btn = ctk.CTkButton(self.source_frame, text=lbl, anchor="w", font=self.font_mini, fg_color="#333333", height=32, command=lambda p=file_path: os.startfile(p))
+        lbl = f"📄 {fname}" + (f" (P.{page_num + 1})" if page_num is not None else "")
+        btn = ctk.CTkButton(
+            self.source_frame,
+            text=lbl,
+            anchor="w",
+            font=self.font_mini,
+            fg_color="#333333",
+            height=32,
+            command=lambda p=file_path: self.open_file_safely(p)
+        )
         btn.pack(fill="x", pady=2)
         self.source_buttons.append(btn)
 

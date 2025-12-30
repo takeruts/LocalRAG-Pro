@@ -90,25 +90,88 @@ $env:NO_PROXY="localhost,127.0.0.1"
 
 本リポジトリにはビルド済みの `.exe` ファイルも含まれていますが（リリースセクション参照）、自身でビルドする場合は仮想環境を有効化した状態で以下を実行してください。
 
-### 1. ビルド用ツールの準備
+### 1. 簡単なビルド方法（推奨）
+
+仮想環境を有効化した状態で、用意されたビルドスクリプトを実行するだけです。
+
+```powershell
+.\build.bat
+```
+
+このスクリプトは以下を自動的に実行します：
+- 仮想環境の検出とアクティベート
+- PyInstallerのインストール確認
+- 既存ビルド成果物のクリーンアップ
+- 実行中のプロセスの自動終了
+- win_rag.specを使用した最適化ビルド
+
+### 2. 手動ビルド方法
+
+より細かい制御が必要な場合は、以下の手順で手動ビルドできます。
+
+#### ビルド用ツールの準備
 
 ```powershell
 pip install pyinstaller
 ```
 
-### 2. ビルドコマンド
+#### ビルドコマンド
 
 ```powershell
-pyinstaller --noconsole --onedir --noconfirm --clean --name "LocalRAG_Pro" `
- --add-data ".venv\Lib\site-packages\customtkinter;customtkinter" `
- --collect-all langchain `
- --collect-all sentence_transformers `
- --collect-all chromadb `
- --collect-all transformers `
+pyinstaller win_rag.spec --clean --noconfirm
+```
+
+または、.specファイルを使用しない場合：
+
+```powershell
+pyinstaller --name "LocalRAG-Pro" --noconsole --onedir `
+ --hidden-import=sentence_transformers --hidden-import=sklearn --hidden-import=scipy `
+ --collect-all customtkinter --collect-all sentence_transformers --collect-all chromadb `
+ --collect-all langchain_community --collect-all langchain_huggingface `
+ --collect-all sklearn --collect-all scipy --collect-all transformers --collect-all tokenizers `
  win_rag.py
 ```
 
-※ ビルド完了後、`dist/LocalRAG_Pro/` フォルダ内に実行ファイルが生成されます。
+### 3. ビルド成果物
+
+ビルド完了後、以下の場所に実行ファイルが生成されます：
+
+```
+dist/LocalRAG-Pro/
+├── LocalRAG-Pro.exe          # メイン実行ファイル
+├── _internal/                # 依存ライブラリ（必須）
+├── models/                   # AIモデルキャッシュ（実行時に作成）
+└── chroma_db/                # ベクトルDB（実行時に作成）
+```
+
+**重要**: `LocalRAG-Pro`フォルダ全体を配布してください。実行ファイル単体では動作しません。
+
+### 4. トラブルシューティング
+
+#### ビルドエラーが発生する場合
+
+1. **既存のプロセスを終了**
+   ```powershell
+   taskkill /F /IM LocalRAG-Pro.exe
+   ```
+
+2. **手動でクリーンアップ**
+   ```powershell
+   Remove-Item -Recurse -Force dist, build
+   ```
+
+3. **依存パッケージを再インストール**
+   ```powershell
+   pip install -r requirements.txt --force-reinstall
+   ```
+
+#### モジュールが見つからないエラー
+
+`win_rag.spec`ファイルの`hiddenimports`セクションに不足しているモジュールを追加してください。
+
+#### サイズが大きすぎる場合
+
+不要なパッケージを`excludes`セクションに追加することで、サイズを削減できます。
 
 ---
 

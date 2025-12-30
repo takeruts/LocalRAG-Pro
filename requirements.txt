@@ -1,3 +1,6 @@
+# --- Build Tools ---
+pyinstaller>=6.0.0
+
 # --- GUI ---
 customtkinter
 
@@ -31,6 +34,7 @@ hf-transfer
 ollama
 
 # --- Utils ---
-requests
-urllib3
+# requests と urllib3 は他のパッケージの依存関係として自動インストールされるためコメントアウト
+# requests
+# urllib3
 
