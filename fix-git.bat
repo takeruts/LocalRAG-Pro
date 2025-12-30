@@ -32,12 +32,7 @@ git add .
 
 echo.
 echo [INFO] 変更をコミット中...
-git commit -m "fix: Remove large binary files from Git tracking
-
-- Remove dist/, build/, deploy/, package/ folders
-- Remove models/ and chroma_db/ folders
-- Apply .gitignore rules properly
-- These files should not be tracked in Git"
+git commit -m "fix: Remove large binary files from Git tracking" -m "- Remove dist/, build/, deploy/, package/ folders" -m "- Remove models/ and chroma_db/ folders" -m "- Apply .gitignore rules properly" -m "- These files should not be tracked in Git"
 
 echo.
 echo ========================================
