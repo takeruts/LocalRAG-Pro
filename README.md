@@ -339,6 +339,72 @@ set VERSION=1.0.0
 
 新しいバージョンをリリースする際は、このバージョン番号を更新してから実行してください。
 
+### GitHub での配布方法
+
+実行ファイルは大容量のため、Gitリポジトリには含めません。代わりに **GitHub Releases** を使用して配布します。
+
+#### 1. リリースの作成
+
+1. GitHubリポジトリページで「Releases」→「Create a new release」をクリック
+2. タグ名を入力（例: `v1.0.0`）
+3. リリースタイトルを入力（例: `LocalRAG-Pro v1.0.0`）
+4. リリースノートを記載:
+   ```markdown
+   ## 新機能
+   - 🤖 AIエージェントモード追加
+   - 🎯 高精度リランカー統合
+
+   ## システム要件
+   - Windows 10/11 (64bit)
+   - RAM 8GB以上推奨
+   - Ollama インストール必須
+
+   ## インストール方法
+   1. LocalRAG-Pro-v1.0.0-Windows.zip をダウンロード
+   2. ZIPを展開
+   3. 起動.bat を実行
+   ```
+5. 「Attach binaries」で `package\LocalRAG-Pro-v1.0.0-Windows.zip` をアップロード
+6. 「Publish release」をクリック
+
+#### 2. Git から大容量ファイルを削除済みの場合
+
+既に`deploy/`や`dist/`をプッシュしてしまった場合は、以下を実行:
+
+```powershell
+.\fix-git.bat
+```
+
+このスクリプトは:
+- ビルド成果物をGitの追跡から削除（ローカルファイルは保持）
+- `.gitignore`を適切に適用
+- 変更を自動コミット
+
+その後、プッシュ:
+```powershell
+git push origin main --force
+```
+
+**注意**: `--force`は履歴を書き換えます。他の人と共同作業している場合は事前に相談してください。
+
+#### 3. 推奨ワークフロー
+
+```powershell
+# 1. コードの変更
+git add .
+git commit -m "feat: Add new feature"
+git push
+
+# 2. ビルド
+.\build.bat
+
+# 3. パッケージ作成
+.\package.bat
+
+# 4. GitHub Releases で配布
+# → WebUI から package\*.zip をアップロード
+```
+
 ---
 
 ## 📜 License
