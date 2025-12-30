@@ -57,7 +57,7 @@ class RAGWinApp(ctk.CTk):
         self.font_mini = ctk.CTkFont(family="Yu Gothic UI", size=12)
         self.font_chat = ctk.CTkFont(family="BIZ UDゴシック", size=14)
 
-        self.title("Local RAG Pro - Reranker Integrated")
+        self.title("Local RAG Pro - AI Agent Edition")
         self.geometry("1300x900")
         
         self.sidebar_width = 340
@@ -82,6 +82,9 @@ class RAGWinApp(ctk.CTk):
         self.rerank_switch = ctk.CTkSwitch(self.sidebar, text="リランカー(高精度)を使用", font=self.font_main)
         self.rerank_switch.select()
         self.rerank_switch.pack(pady=10)
+
+        self.agent_switch = ctk.CTkSwitch(self.sidebar, text="エージェントモード(自律検索)", font=self.font_main)
+        self.agent_switch.pack(pady=5)
 
         self.btn_scan = ctk.CTkButton(self.sidebar, text="⚡ Indexing 開始/再開", font=self.font_main, fg_color="#1E88E5", command=self.start_scan)
         self.btn_scan.pack(pady=10, padx=20, fill="x")
@@ -300,7 +303,132 @@ class RAGWinApp(ctk.CTk):
         self.update_chat("You", query)
         for b in self.source_buttons: b.destroy()
         self.source_buttons = []
-        threading.Thread(target=self.rag_task, args=(query,), daemon=True).start()
+
+        # エージェントモードが有効な場合
+        if self.agent_switch.get():
+            threading.Thread(target=self.agent_rag_task, args=(query,), daemon=True).start()
+        else:
+            threading.Thread(target=self.rag_task, args=(query,), daemon=True).start()
+
+    def agent_rag_task(self, query):
+        """エージェントモード: AIが自律的に必要な資料を判断して検索"""
+        db = None
+        try:
+            # ステップ1: 質問を分析して検索キーワードを生成
+            self.after(0, lambda: self.update_chat("Agent", "🤔 質問を分析中..."))
+
+            embed_model, db_dir = self.get_model_config()
+
+            try:
+                embeddings = self.create_embeddings(embed_model)
+                db = Chroma(persist_directory=db_dir, embedding_function=embeddings)
+            except Exception as e:
+                self.after(0, lambda: self.update_chat("Error", f"Embeddingロード失敗: {str(e)}"))
+                return
+
+            # AIに質問を分析させて検索キーワードを抽出
+            llm = Ollama(model=self.ollama_model)
+            analysis_prompt = f"""以下の質問に答えるために、どのような資料を検索すべきか分析してください。
+検索キーワードを3つ提案してください（カンマ区切り）。
+
+質問: {query}
+
+検索キーワード:"""
+
+            try:
+                keywords_response = llm.invoke(analysis_prompt)
+                keywords = [k.strip() for k in keywords_response.split(',')[:3]]
+                self.after(0, lambda k=keywords: self.update_chat("Agent", f"💡 検索キーワード: {', '.join(k)}"))
+            except:
+                keywords = [query]  # フォールバック
+
+            # ステップ2: 複数のキーワードで検索して資料を収集
+            all_docs = []
+            seen_sources = set()
+
+            for keyword in keywords:
+                self.after(0, lambda k=keyword: self.update_chat("Agent", f"🔍 「{k}」で検索中..."))
+
+                initial_k = 5 if (self.rerank_switch.get() and HAS_RERANKER) else 3
+                docs = db.as_retriever(search_kwargs={"k": initial_k}).invoke(keyword)
+
+                # 重複を除外して追加
+                for doc in docs:
+                    source = doc.metadata.get('source', '')
+                    if source not in seen_sources:
+                        all_docs.append(doc)
+                        seen_sources.add(source)
+
+            if not all_docs:
+                self.after(0, lambda: self.update_chat("Agent", "⚠️ 関連資料が見つかりませんでした。"))
+                return
+
+            self.after(0, lambda: self.update_chat("Agent", f"📚 {len(all_docs)}件の資料を発見"))
+
+            # ステップ3: リランキング
+            if self.rerank_switch.get() and HAS_RERANKER and len(all_docs) > 3:
+                self.after(0, lambda: self.update_chat("Agent", "🎯 最も関連性の高い資料を選定中..."))
+                try:
+                    reranker = CrossEncoder(
+                        "BAAI/bge-reranker-base",
+                        device='cpu',
+                        cache_dir=MODELS_DIR
+                    )
+                    pairs = [[query, d.page_content] for d in all_docs]
+                    scores = reranker.predict(pairs)
+                    all_docs = [d for _, d in sorted(zip(scores, all_docs), key=lambda x: x[0], reverse=True)[:5]]
+                except Exception as e:
+                    self.after(0, lambda: self.update_chat("Agent", f"⚠️ リランカー失敗: {str(e)}"))
+                    all_docs = all_docs[:5]
+
+            # ステップ4: 資料の内容を確認して、十分な情報があるか判断
+            context = "\n\n".join([f"【出典: {os.path.basename(d.metadata.get('source', ''))}】\n{d.page_content}" for d in all_docs])
+
+            self.after(0, lambda: self.update_chat("Agent", "🧠 資料を読み込んで回答を生成中..."))
+
+            # 資料が十分か判断
+            check_prompt = f"""以下の資料を使って、この質問に答えられますか？
+「はい」または「いいえ」だけで答えてください。
+
+質問: {query}
+
+資料:
+{context[:2000]}...
+
+回答:"""
+
+            try:
+                sufficiency = llm.invoke(check_prompt).strip().lower()
+                if "いいえ" in sufficiency or "no" in sufficiency:
+                    self.after(0, lambda: self.update_chat("Agent", "⚠️ 資料が不十分です。別の検索キーワードを試します..."))
+                    # 再検索ロジックをここに追加可能
+            except:
+                pass
+
+            # ステップ5: 最終的な回答を生成
+            try:
+                prompt = ChatPromptTemplate.from_template(
+                    "以下の資料を参考に、質問に詳しく答えてください。"
+                    "資料のどの部分を参照したかも明示してください。\n\n"
+                    "資料:\n{context}\n\n質問: {question}"
+                )
+                chain = prompt | llm | StrOutputParser()
+                res = chain.invoke({"context": context, "question": query})
+                self.after(0, lambda r=res: self.update_chat("Assistant", r))
+            except Exception as e:
+                self.after(0, lambda: self.update_chat("Error", f"Ollamaエラー。起動を確認してください。\n{str(e)}"))
+                return
+
+            # 参照資料を表示
+            for d in all_docs:
+                p, pg = d.metadata.get("source"), d.metadata.get("page")
+                self.after(0, lambda f=p, g=pg: self.add_source_button(f, g))
+
+        except Exception as e:
+            self.after(0, lambda: self.update_chat("Error", f"エージェントエラー: {str(e)}"))
+        finally:
+            if db is not None:
+                del db
 
     def rag_task(self, query):
         db = None
