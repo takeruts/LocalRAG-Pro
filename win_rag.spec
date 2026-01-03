@@ -11,7 +11,6 @@ hiddenimports = []
 packages_to_collect = [
     'customtkinter',
     'langchain_community',
-    'langchain_huggingface',
     'langchain_core',
     'langchain_text_splitters',
     'chromadb',
@@ -42,8 +41,8 @@ hiddenimports += [
     'langchain_core.output_parsers',
     'langchain_core.documents',
     'langchain_text_splitters',
-    'langchain_huggingface',
-    'langchain_huggingface.embeddings',
+    'langchain_community.embeddings',
+    'langchain_community.embeddings.huggingface',
 
     # numpy
     'numpy',
