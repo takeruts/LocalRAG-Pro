@@ -42,7 +42,7 @@ hiddenimports += [
     'langchain_core.documents',
     'langchain_text_splitters',
     'langchain_community.embeddings',
-    'langchain_community.embeddings.huggingface',
+    'langchain_community.embeddings.ollama',
 
     # numpy
     'numpy',

@@ -19,7 +19,7 @@ from langchain_community.document_loaders import PyMuPDFLoader, TextLoader, Docx
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.llms import Ollama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -117,12 +117,17 @@ class RAGWinApp(ctk.CTk):
         self.btn_folder = ctk.CTkButton(self.sidebar, text="📁 フォルダ選択", font=self.font_main, corner_radius=10, command=self.select_folder)
         self.btn_folder.pack(pady=10, padx=20, fill="x")
 
-        ctk.CTkLabel(self.sidebar, text="Embeddingモデル:", font=self.font_mini, text_color="#AAAAAA").pack(pady=(10,2), padx=20, anchor="w")
-        self.model_option = ctk.CTkOptionMenu(self.sidebar, values=["Multilingual-E5-Small", "PLamo-Embedding-1B"], font=self.font_main)
-        self.model_option.pack(pady=2, padx=20, fill="x")
+        # Embedding情報表示
+        embed_info = ctk.CTkLabel(
+            self.sidebar,
+            text="📊 Embedding: nomic-embed-text",
+            font=self.font_mini,
+            text_color="#90CAF9"
+        )
+        embed_info.pack(pady=5, padx=20)
 
         self.agent_switch = ctk.CTkSwitch(self.sidebar, text="エージェントモード(自律検索)", font=self.font_main)
-        self.agent_switch.pack(pady=5)
+        self.agent_switch.pack(pady=10)
 
         self.btn_scan = ctk.CTkButton(self.sidebar, text="⚡ Indexing 開始/再開", font=self.font_main, fg_color="#1E88E5", command=self.start_scan)
         self.btn_scan.pack(pady=10, padx=20, fill="x")
@@ -176,10 +181,10 @@ class RAGWinApp(ctk.CTk):
         self.after(500, self.check_ollama_status)
 
     def get_model_config(self):
-        """モデル設定を取得する"""
-        is_e5 = "E5" in self.model_option.get()
-        embed_model = "intfloat/multilingual-e5-small" if is_e5 else "pfnet/plamo-embedding-1b"
-        db_dir = os.path.join(BASE_DB_DIR, "e5" if is_e5 else "plamo")
+        """モデル設定を取得する（Ollama版）"""
+        # Ollamaのembeddingモデルを使用
+        embed_model = "nomic-embed-text"
+        db_dir = os.path.join(BASE_DB_DIR, "ollama_nomic")
         return embed_model, db_dir
 
     def clean_metadata_value(self, v):
@@ -191,11 +196,11 @@ class RAGWinApp(ctk.CTk):
         return str(v)
 
     def create_embeddings(self, model_name):
-        """Embeddingモデルを作成する"""
-        return HuggingFaceEmbeddings(
-            model_name=model_name,
-            cache_folder=MODELS_DIR,
-            model_kwargs={'device': 'cpu', 'trust_remote_code': True}
+        """Embeddingモデルを作成する（Ollama使用）"""
+        # Ollamaのembeddingモデルを使用
+        # nomic-embed-text, mxbai-embed-large, all-minilm などが使用可能
+        return OllamaEmbeddings(
+            model="nomic-embed-text"  # デフォルトのembeddingモデル
         )
 
     def check_ollama_status(self):

@@ -21,20 +21,16 @@ BASE_DB_DIR = os.path.join(current_dir, "chroma_db")
 MODELS_DIR = os.path.join(current_dir, "models")
 VALID_EXTS = ('.pdf', '.pptx', '.docx', '.doc', '.xlsx', '.xls', '.txt')
 
-# Embeddingモデル設定 (PLamo/E5)
+# Embeddingモデル設定 (Ollama版)
 EMBED_MODELS = {
-    "Multilingual-E5-Small (軽量・高速)": {
-        "id": "intfloat/multilingual-e5-small",
-        "dir": "e5_small"
-    },
-    "PLamo Embedding 1B (高精度・国産)": {
-        "id": "pfnet/plamo-embedding-1b",
-        "dir": "plamo_1b"
+    "Nomic Embed Text (Ollama標準)": {
+        "id": "nomic-embed-text",
+        "dir": "ollama_nomic"
     }
 }
 
-DEFAULT_LLM = "gemma3:4b"
-DEFAULT_EMBED_LABEL = "Multilingual-E5-Small (軽量・高速)"
+DEFAULT_LLM = "gemma2:2b"
+DEFAULT_EMBED_LABEL = "Nomic Embed Text (Ollama標準)"
 
 # フォルダ生成
 for d in [BASE_DB_DIR, MODELS_DIR]:
@@ -52,7 +48,7 @@ from langchain_community.document_loaders import (
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.llms import Ollama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -111,12 +107,9 @@ def get_models(llm_model_name, embed_model_id):
     except:
         llm = None
     try:
-        model_kwargs = {'device': 'cpu', 'trust_remote_code': True}
-        embeddings = HuggingFaceEmbeddings(
-            model_name=embed_model_id,
-            cache_folder=MODELS_DIR,
-            model_kwargs=model_kwargs,
-            encode_kwargs={'normalize_embeddings': True}
+        # Ollamaのembeddingモデルを使用
+        embeddings = OllamaEmbeddings(
+            model=embed_model_id  # nomic-embed-text
         )
         return llm, embeddings
     except Exception as e:
