@@ -57,12 +57,8 @@ from langchain_community.llms import Ollama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-# リランカー用（インストールされていない場合は無視する）
-try:
-    from sentence_transformers import CrossEncoder
-    HAS_RERANKER_LIB = True
-except ImportError:
-    HAS_RERANKER_LIB = False
+# リランカー機能は削除（Ollama専用版）
+HAS_RERANKER_LIB = False
 
 try:
     import pptx
@@ -127,12 +123,7 @@ def get_models(llm_model_name, embed_model_id):
         st.error(f"モデルロードエラー: {e}")
         return llm, None
 
-@st.cache_resource
-def get_reranker():
-    if not HAS_RERANKER_LIB: return None
-    # 日本語に強く、CPUでも比較的動作する軽量モデル
-    model_name = "BAAI/bge-reranker-base"
-    return CrossEncoder(model_name, device='cpu', max_length=512)
+# リランカー関数は削除（Ollama専用版）
 
 def get_db_stats(target_path, db_dir):
     if not target_path or not os.path.exists(target_path):
@@ -257,13 +248,56 @@ def run_scan_and_indexing(target_path, embed_model_id, current_db_dir):
     gc.collect()
     return True
 
+# --- Ollama関連のヘルパー関数 ---
+def check_ollama_running():
+    """Ollamaが実行中かチェック"""
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        return response.status_code == 200
+    except:
+        return False
+
+def get_ollama_models():
+    """利用可能なOllamaモデルのリストを取得"""
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        if response.status_code == 200:
+            data = response.json()
+            models = [model['name'] for model in data.get('models', [])]
+            return models if models else []
+        return []
+    except:
+        return []
+
 # --- UIレイアウト ---
 st.sidebar.header("⚙️ システム設定")
 
-# リランカーのトグル
-use_rerank = st.sidebar.toggle("リランカーを有効にする", value=False, help="検索精度が劇的に向上しますが、回答開始まで数秒追加でかかります。")
-if use_rerank and not HAS_RERANKER_LIB:
-    st.sidebar.error("リランカーライブラリが未インストールです。")
+# Ollamaステータスチェック
+if check_ollama_running():
+    st.sidebar.success("✓ Ollama 実行中")
+    ollama_models = get_ollama_models()
+    if ollama_models:
+        selected_ollama_model = st.sidebar.selectbox("LLMモデル:", options=ollama_models, index=0)
+        DEFAULT_LLM = selected_ollama_model
+    else:
+        st.sidebar.warning("モデルがインストールされていません")
+        DEFAULT_LLM = "gemma2:2b"
+else:
+    st.sidebar.error("⚠ Ollama 未起動")
+    with st.sidebar.expander("📖 Ollamaのインストール方法", expanded=True):
+        st.markdown("""
+        1. [Ollama公式サイト](https://ollama.com/download)からダウンロード
+        2. インストール後、コマンドプロンプトで:
+        ```
+        ollama run gemma2:2b
+        ```
+        3. Ollamaを起動してから再度アクセスしてください
+        """)
+    DEFAULT_LLM = "gemma2:2b"
+
+st.sidebar.divider()
 
 current_label = st.sidebar.selectbox("Embeddingモデル:", options=list(EMBED_MODELS.keys()), index=0)
 
@@ -345,22 +379,9 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
             db = Chroma(persist_directory=current_db_dir, embedding_function=embeddings)
             
             with st.spinner("情報を検索・分析中..."):
-                # --- 検索ロジック (Rerank対応) ---
-                if use_rerank and HAS_RERANKER_LIB:
-                    # リランクする場合は多めに取得 (10件)
-                    retriever = db.as_retriever(search_kwargs={"k": 10})
-                    initial_docs = retriever.invoke(last_prompt)
-                    
-                    reranker = get_reranker()
-                    pairs = [[last_prompt, d.page_content] for d in initial_docs]
-                    scores = reranker.predict(pairs)
-                    
-                    scored_docs = sorted(zip(scores, initial_docs), key=lambda x: x[0], reverse=True)
-                    docs = [d for score, d in scored_docs[:3]] # 上位3件に絞る
-                else:
-                    # 通常検索
-                    retriever = db.as_retriever(search_kwargs={"k": 3})
-                    docs = retriever.invoke(last_prompt)
+                # 通常検索（リランカーは削除）
+                retriever = db.as_retriever(search_kwargs={"k": 3})
+                docs = retriever.invoke(last_prompt)
 
                 context_text = "\n\n".join([f"【出典: {os.path.basename(d.metadata.get('source', ''))}】\n{d.page_content}" for d in docs])
                 

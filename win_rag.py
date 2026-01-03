@@ -24,10 +24,8 @@ from langchain_community.llms import Ollama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-# リランカー用（PyInstallerのために明示的にインポート）
-import sentence_transformers
-from sentence_transformers import CrossEncoder, SentenceTransformer
-HAS_RERANKER = True
+# リランカー機能は削除（Ollama専用版）
+HAS_RERANKER = False
 
 # --- パス解決 & 環境変数 ---
 frozen = getattr(sys, 'frozen', False)
@@ -38,6 +36,29 @@ os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 for d in [BASE_DB_DIR, MODELS_DIR]:
     os.makedirs(d, exist_ok=True)
+
+# --- Ollama関連のヘルパー関数 ---
+def check_ollama_running():
+    """Ollamaが実行中かチェック"""
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        return response.status_code == 200
+    except:
+        return False
+
+def get_ollama_models():
+    """利用可能なOllamaモデルのリストを取得"""
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        if response.status_code == 200:
+            data = response.json()
+            models = [model['name'] for model in data.get('models', [])]
+            return models if models else ["gemma2:2b", "gemma2:9b", "qwen2.5:7b"]
+        return ["gemma2:2b", "gemma2:9b", "qwen2.5:7b"]
+    except:
+        return ["gemma2:2b", "gemma2:9b", "qwen2.5:7b"]
 
 class RAGWinApp(ctk.CTk):
     def __init__(self):
@@ -73,15 +94,32 @@ class RAGWinApp(ctk.CTk):
         
         ctk.CTkLabel(self.sidebar, text="設定", font=self.font_bold).pack(pady=(20, 10))
 
+        # Ollamaステータス表示
+        self.ollama_status_frame = ctk.CTkFrame(self.sidebar)
+        self.ollama_status_frame.pack(pady=5, padx=20, fill="x")
+        self.ollama_status_label = ctk.CTkLabel(self.ollama_status_frame, text="", font=self.font_mini)
+        self.ollama_status_label.pack(pady=5)
+
+        # Ollamaモデル選択
+        ctk.CTkLabel(self.sidebar, text="LLMモデル:", font=self.font_mini, text_color="#AAAAAA").pack(pady=(10,2), padx=20, anchor="w")
+        self.ollama_models = get_ollama_models()
+        self.ollama_model_option = ctk.CTkOptionMenu(
+            self.sidebar,
+            values=self.ollama_models if self.ollama_models else ["モデルなし"],
+            font=self.font_main,
+            command=self.on_model_change
+        )
+        if self.ollama_models:
+            self.ollama_model = self.ollama_models[0]
+            self.ollama_model_option.set(self.ollama_models[0])
+        self.ollama_model_option.pack(pady=2, padx=20, fill="x")
+
         self.btn_folder = ctk.CTkButton(self.sidebar, text="📁 フォルダ選択", font=self.font_main, corner_radius=10, command=self.select_folder)
-        self.btn_folder.pack(pady=5, padx=20, fill="x")
+        self.btn_folder.pack(pady=10, padx=20, fill="x")
 
+        ctk.CTkLabel(self.sidebar, text="Embeddingモデル:", font=self.font_mini, text_color="#AAAAAA").pack(pady=(10,2), padx=20, anchor="w")
         self.model_option = ctk.CTkOptionMenu(self.sidebar, values=["Multilingual-E5-Small", "PLamo-Embedding-1B"], font=self.font_main)
-        self.model_option.pack(pady=5, padx=20, fill="x")
-
-        self.rerank_switch = ctk.CTkSwitch(self.sidebar, text="リランカー(高精度)を使用", font=self.font_main)
-        self.rerank_switch.select()
-        self.rerank_switch.pack(pady=10)
+        self.model_option.pack(pady=2, padx=20, fill="x")
 
         self.agent_switch = ctk.CTkSwitch(self.sidebar, text="エージェントモード(自律検索)", font=self.font_main)
         self.agent_switch.pack(pady=5)
@@ -134,6 +172,9 @@ class RAGWinApp(ctk.CTk):
         self.btn_send = ctk.CTkButton(self.input_area, text="送信", width=100, height=50, command=self.send_query)
         self.btn_send.grid(row=0, column=1, padx=(12, 0))
 
+        # 起動時にOllamaステータスをチェック
+        self.after(500, self.check_ollama_status)
+
     def get_model_config(self):
         """モデル設定を取得する"""
         is_e5 = "E5" in self.model_option.get()
@@ -156,6 +197,43 @@ class RAGWinApp(ctk.CTk):
             cache_folder=MODELS_DIR,
             model_kwargs={'device': 'cpu', 'trust_remote_code': True}
         )
+
+    def check_ollama_status(self):
+        """Ollamaの状態をチェックしてUIを更新"""
+        if check_ollama_running():
+            self.ollama_status_label.configure(
+                text="✓ Ollama 実行中",
+                text_color="#4CAF50"
+            )
+            # モデルリストを更新
+            models = get_ollama_models()
+            if models != self.ollama_models:
+                self.ollama_models = models
+                self.ollama_model_option.configure(values=models)
+                if models and self.ollama_model not in models:
+                    self.ollama_model = models[0]
+                    self.ollama_model_option.set(models[0])
+        else:
+            self.ollama_status_label.configure(
+                text="⚠ Ollama 未起動 - インストール・起動してください",
+                text_color="#FF9800"
+            )
+            messagebox.showwarning(
+                "Ollama未起動",
+                "Ollamaが実行されていません。\n\n"
+                "インストール方法:\n"
+                "1. https://ollama.com/download からダウンロード\n"
+                "2. インストール後、コマンドプロンプトで:\n"
+                "   ollama run gemma2:2b\n\n"
+                "Ollamaを起動してから再度お試しください。"
+            )
+        # 5秒後に再チェック
+        self.after(5000, self.check_ollama_status)
+
+    def on_model_change(self, choice):
+        """モデル選択が変更されたときの処理"""
+        self.ollama_model = choice
+        self.update_chat("System", f"LLMモデルを変更: {choice}")
 
     def on_resize(self, event):
         new_width = event.x_root - self.winfo_rootx()

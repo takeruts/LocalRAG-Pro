@@ -65,34 +65,43 @@ if exist "dist" (
 
 REM .specファイルを使用してビルド
 echo.
-echo [INFO] PyInstallerでビルドを開始します...
-echo [INFO] この処理には数分かかる場合があります。
+echo [INFO] PyInstallerでビルドを開始します（Ollamaベース版）...
+echo [INFO] 予想時間: 5-10分
+echo [INFO] 最終サイズ: 約300-500MB
 echo.
 
 if exist "win_rag.spec" (
-    echo [INFO] .specファイルを使用してビルド中...
+    echo [INFO] win_rag.spec を使用してビルド中...
     pyinstaller win_rag.spec --clean --noconfirm
 ) else (
-    echo [WARNING] win_rag.specが見つかりません。コマンドラインオプションでビルドします...
+    echo [WARNING] win_rag.spec が見つかりません。コマンドラインオプションでビルドします...
     pyinstaller ^
         --name "LocalRAG-Pro" ^
         --noconsole ^
         --onedir ^
+        --optimize=2 ^
+        --strip ^
+        --upx-dir=. ^
+        --hidden-import=langchain_community.llms.ollama ^
         --hidden-import=langchain_community.document_loaders ^
-        --hidden-import=langchain_community.vectorstores ^
-        --hidden-import=langchain_huggingface ^
-        --hidden-import=sentence_transformers ^
-        --hidden-import=chromadb ^
-        --hidden-import=tiktoken_ext.openai_public ^
-        --hidden-import=tiktoken_ext ^
-        --hidden-import=PIL._tkinter_finder ^
+        --hidden-import=langchain_community.vectorstores.chroma ^
+        --hidden-import=langchain_huggingface.embeddings ^
+        --hidden-import=sentence_transformers.cross_encoder ^
+        --hidden-import=sentence_transformers.SentenceTransformer ^
         --collect-all customtkinter ^
-        --collect-all sentence_transformers ^
-        --collect-all chromadb ^
         --collect-all langchain_community ^
         --collect-all langchain_huggingface ^
+        --collect-all langchain_core ^
+        --collect-all langchain_text_splitters ^
+        --collect-all chromadb ^
+        --collect-all sentence_transformers ^
+        --exclude-module torch ^
+        --exclude-module transformers ^
+        --exclude-module tokenizers ^
+        --exclude-module accelerate ^
+        --exclude-module bitsandbytes ^
         --exclude-module matplotlib ^
-        --exclude-module scipy ^
+        --exclude-module pandas ^
         --exclude-module pytest ^
         --exclude-module notebook ^
         --exclude-module jupyter ^

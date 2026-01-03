@@ -26,7 +26,7 @@ opentelemetry-sdk
 opentelemetry-instrumentation-fastapi
 
 # --- AI Models / Embeddings ---
-sentence-transformers
+# sentence-transformers は削除（torch依存のため）
 huggingface-hub
 hf-transfer
 
@@ -34,7 +34,5 @@ hf-transfer
 ollama
 
 # --- Utils ---
-# requests と urllib3 は他のパッケージの依存関係として自動インストールされるためコメントアウト
-# requests
-# urllib3
+requests  # Ollama API通信に使用
 

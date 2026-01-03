@@ -7,25 +7,14 @@ datas = []
 binaries = []
 hiddenimports = []
 
-# CustomTkinterの収集
-try:
-    import customtkinter
-    ctk_path = os.path.dirname(customtkinter.__file__)
-    datas.append((ctk_path, 'customtkinter'))
-except ImportError:
-    print("Warning: customtkinter not found")
-
-# 必要なパッケージを収集
+# 必要なパッケージを収集（Ollamaのみ版 - 軽量化）
 packages_to_collect = [
+    'customtkinter',
     'langchain_community',
     'langchain_huggingface',
+    'langchain_core',
+    'langchain_text_splitters',
     'chromadb',
-    'sentence_transformers',
-    'transformers',
-    'tokenizers',
-    'huggingface_hub',
-    'sklearn',
-    'scipy',
 ]
 
 for package in packages_to_collect:
@@ -40,62 +29,25 @@ for package in packages_to_collect:
 
 # 追加の隠しインポート
 hiddenimports += [
-    # tiktoken
-    'tiktoken_ext.openai_public',
-    'tiktoken_ext',
+    # CustomTkinter
+    'customtkinter',
 
-    # PIL/Pillow
-    'PIL._tkinter_finder',
-    'PIL.Image',
-
-    # sentence_transformers - 全サブモジュール
-    'sentence_transformers',
-    'sentence_transformers.cross_encoder',
-    'sentence_transformers.cross_encoder.CrossEncoder',
-    'sentence_transformers.models',
-    'sentence_transformers.models.Transformer',
-    'sentence_transformers.models.Pooling',
-    'sentence_transformers.models.Dense',
-    'sentence_transformers.models.Normalize',
-    'sentence_transformers.evaluation',
-    'sentence_transformers.util',
-    'sentence_transformers.SentenceTransformer',
-
-    # transformers
-    'transformers',
-    'transformers.models',
-    'transformers.models.auto',
-    'transformers.models.bert',
-    'transformers.tokenization_utils',
-    'transformers.tokenization_utils_base',
-
-    # tokenizers
-    'tokenizers',
-    'tokenizers.implementations',
-
-    # torch
-    'torch',
-    'torch.nn',
-    'torch.nn.functional',
+    # LangChain
+    'langchain_community.llms',
+    'langchain_community.llms.ollama',
+    'langchain_community.document_loaders',
+    'langchain_community.vectorstores',
+    'langchain_community.vectorstores.chroma',
+    'langchain_core.prompts',
+    'langchain_core.output_parsers',
+    'langchain_core.documents',
+    'langchain_text_splitters',
+    'langchain_huggingface',
+    'langchain_huggingface.embeddings',
 
     # numpy
     'numpy',
-    'numpy.core',
     'numpy.core._multiarray_umath',
-
-    # sklearn (sentence_transformersが使用)
-    'sklearn',
-    'sklearn.metrics',
-    'sklearn.metrics.pairwise',
-    'sklearn.utils',
-    'sklearn.utils._param_validation',
-
-    # scipy (sklearnが依存)
-    'scipy',
-    'scipy.sparse',
-    'scipy.sparse.csgraph',
-    'scipy.special',
-    'scipy.linalg',
 ]
 
 a = Analysis(
@@ -108,16 +60,46 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
+        # 開発・テストツール
         'matplotlib',
         'pytest',
         'notebook',
         'jupyter',
         'IPython',
-        'pandas.plotting',
-        'pandas.tests',
+        'debugpy',
+        'pdb',
+        'unittest',
+        'test',
+        'tests',
+        '_pytest',
+
+        # 不要なデータサイエンスライブラリ
+        'pandas',
+        'plotly',
+        'seaborn',
+        'bokeh',
+
+        # 画像処理
+        'cv2',
+        'PIL.ImageQt',
+        'PIL.ImageShow',
+
+        # Torch/Transformers関連（完全除外）
+        'torch',
+        'transformers',
+        'tokenizers',
+        'accelerate',
+        'bitsandbytes',
+        'sentence_transformers',
+
+        # 開発用ツール
+        'black',
+        'mypy',
+        'pylint',
+        'flake8',
     ],
     noarchive=False,
-    optimize=0,
+    optimize=2,  # Python最適化レベル（0→2）
 )
 
 pyz = PYZ(a.pure)
@@ -128,24 +110,30 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='LocalRAG-Pro',
-    debug=True,  # デバッグモード有効
+    debug=False,  # リリースモード
     bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    console=True,  # コンソールを表示してエラー確認
+    strip=False,  # Windowsではstripツールが無いためFalse
+    upx=True,    # UPX圧縮有効
+    console=False,  # コンソールなし
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=None,  # アイコン追加可能
 )
 
 coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
+    strip=False,  # Windowsではstripツールが無いためFalse
+    upx=True,    # 全バイナリをUPX圧縮
+    upx_exclude=[
+        # UPX圧縮で問題が起きる可能性のあるファイルを除外
+        'vcruntime*.dll',
+        'python*.dll',
+        'Qt*.dll',
+    ],
     name='LocalRAG-Pro',
 )
