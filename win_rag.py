@@ -48,17 +48,34 @@ def check_ollama_running():
         return False
 
 def get_ollama_models():
-    """利用可能なOllamaモデルのリストを取得"""
+    """利用可能なOllama LLMモデルのリストを取得"""
     try:
         import requests
         response = requests.get("http://localhost:11434/api/tags", timeout=2)
         if response.status_code == 200:
             data = response.json()
-            models = [model['name'] for model in data.get('models', [])]
-            return models if models else ["gemma2:2b", "gemma2:9b", "qwen2.5:7b"]
+            all_models = [model['name'] for model in data.get('models', [])]
+            # embeddingモデルを除外
+            llm_models = [m for m in all_models if 'embed' not in m.lower()]
+            return llm_models if llm_models else ["gemma2:2b", "gemma2:9b", "qwen2.5:7b"]
         return ["gemma2:2b", "gemma2:9b", "qwen2.5:7b"]
     except:
         return ["gemma2:2b", "gemma2:9b", "qwen2.5:7b"]
+
+def get_ollama_embedding_models():
+    """利用可能なOllama Embeddingモデルのリストを取得"""
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        if response.status_code == 200:
+            data = response.json()
+            all_models = [model['name'] for model in data.get('models', [])]
+            # embeddingモデルのみ抽出
+            embed_models = [m for m in all_models if 'embed' in m.lower()]
+            return embed_models if embed_models else ["nomic-embed-text", "mxbai-embed-large", "all-minilm"]
+        return ["nomic-embed-text", "mxbai-embed-large", "all-minilm"]
+    except:
+        return ["nomic-embed-text", "mxbai-embed-large", "all-minilm"]
 
 class RAGWinApp(ctk.CTk):
     def __init__(self):
@@ -69,7 +86,8 @@ class RAGWinApp(ctk.CTk):
         self.folder_path = ""
         self.source_buttons = []
         self.error_files = []
-        self.ollama_model = "gemma3:4b"  # デフォルトモデル
+        self.ollama_model = "gemma2:2b"  # デフォルトLLMモデル
+        self.embedding_model = "nomic-embed-text"  # デフォルトEmbeddingモデル
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
@@ -114,17 +132,22 @@ class RAGWinApp(ctk.CTk):
             self.ollama_model_option.set(self.ollama_models[0])
         self.ollama_model_option.pack(pady=2, padx=20, fill="x")
 
+        # Embeddingモデル選択
+        ctk.CTkLabel(self.sidebar, text="Embeddingモデル:", font=self.font_mini, text_color="#AAAAAA").pack(pady=(10,2), padx=20, anchor="w")
+        self.embedding_models = get_ollama_embedding_models()
+        self.embedding_model_option = ctk.CTkOptionMenu(
+            self.sidebar,
+            values=self.embedding_models if self.embedding_models else ["モデルなし"],
+            font=self.font_main,
+            command=self.on_embedding_model_change
+        )
+        if self.embedding_models:
+            self.embedding_model = self.embedding_models[0]
+            self.embedding_model_option.set(self.embedding_models[0])
+        self.embedding_model_option.pack(pady=2, padx=20, fill="x")
+
         self.btn_folder = ctk.CTkButton(self.sidebar, text="📁 フォルダ選択", font=self.font_main, corner_radius=10, command=self.select_folder)
         self.btn_folder.pack(pady=10, padx=20, fill="x")
-
-        # Embedding情報表示
-        embed_info = ctk.CTkLabel(
-            self.sidebar,
-            text="📊 Embedding: nomic-embed-text",
-            font=self.font_mini,
-            text_color="#90CAF9"
-        )
-        embed_info.pack(pady=5, padx=20)
 
         self.agent_switch = ctk.CTkSwitch(self.sidebar, text="エージェントモード(自律検索)", font=self.font_main)
         self.agent_switch.pack(pady=10)
@@ -182,9 +205,11 @@ class RAGWinApp(ctk.CTk):
 
     def get_model_config(self):
         """モデル設定を取得する（Ollama版）"""
-        # Ollamaのembeddingモデルを使用
-        embed_model = "nomic-embed-text"
-        db_dir = os.path.join(BASE_DB_DIR, "ollama_nomic")
+        # 選択されたEmbeddingモデルを使用
+        embed_model = self.embedding_model
+        # モデル名からディレクトリ名を生成（特殊文字を除去）
+        safe_name = embed_model.replace(':', '_').replace('-', '_').replace('.', '_')
+        db_dir = os.path.join(BASE_DB_DIR, f"ollama_{safe_name}")
         return embed_model, db_dir
 
     def clean_metadata_value(self, v):
@@ -197,10 +222,9 @@ class RAGWinApp(ctk.CTk):
 
     def create_embeddings(self, model_name):
         """Embeddingモデルを作成する（Ollama使用）"""
-        # Ollamaのembeddingモデルを使用
-        # nomic-embed-text, mxbai-embed-large, all-minilm などが使用可能
+        # 指定されたOllamaのembeddingモデルを使用
         return OllamaEmbeddings(
-            model="nomic-embed-text"  # デフォルトのembeddingモデル
+            model=model_name
         )
 
     def check_ollama_status(self):
@@ -236,9 +260,14 @@ class RAGWinApp(ctk.CTk):
         self.after(5000, self.check_ollama_status)
 
     def on_model_change(self, choice):
-        """モデル選択が変更されたときの処理"""
+        """LLMモデル選択が変更されたときの処理"""
         self.ollama_model = choice
         self.update_chat("System", f"LLMモデルを変更: {choice}")
+
+    def on_embedding_model_change(self, choice):
+        """Embeddingモデル選択が変更されたときの処理"""
+        self.embedding_model = choice
+        self.update_chat("System", f"Embeddingモデルを変更: {choice}\n※次回のIndexing時に適用されます")
 
     def on_resize(self, event):
         new_width = event.x_root - self.winfo_rootx()

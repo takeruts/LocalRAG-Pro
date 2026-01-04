@@ -21,16 +21,7 @@ BASE_DB_DIR = os.path.join(current_dir, "chroma_db")
 MODELS_DIR = os.path.join(current_dir, "models")
 VALID_EXTS = ('.pdf', '.pptx', '.docx', '.doc', '.xlsx', '.xls', '.txt')
 
-# Embeddingモデル設定 (Ollama版)
-EMBED_MODELS = {
-    "Nomic Embed Text (Ollama標準)": {
-        "id": "nomic-embed-text",
-        "dir": "ollama_nomic"
-    }
-}
-
 DEFAULT_LLM = "gemma2:2b"
-DEFAULT_EMBED_LABEL = "Nomic Embed Text (Ollama標準)"
 
 # フォルダ生成
 for d in [BASE_DB_DIR, MODELS_DIR]:
@@ -252,14 +243,31 @@ def check_ollama_running():
         return False
 
 def get_ollama_models():
-    """利用可能なOllamaモデルのリストを取得"""
+    """利用可能なOllama LLMモデルのリストを取得"""
     try:
         import requests
         response = requests.get("http://localhost:11434/api/tags", timeout=2)
         if response.status_code == 200:
             data = response.json()
-            models = [model['name'] for model in data.get('models', [])]
-            return models if models else []
+            all_models = [model['name'] for model in data.get('models', [])]
+            # embeddingモデルを除外
+            llm_models = [m for m in all_models if 'embed' not in m.lower()]
+            return llm_models if llm_models else []
+        return []
+    except:
+        return []
+
+def get_ollama_embedding_models():
+    """利用可能なOllama Embeddingモデルのリストを取得"""
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        if response.status_code == 200:
+            data = response.json()
+            all_models = [model['name'] for model in data.get('models', [])]
+            # embeddingモデルのみ抽出
+            embed_models = [m for m in all_models if 'embed' in m.lower()]
+            return embed_models if embed_models else []
         return []
     except:
         return []
@@ -292,18 +300,31 @@ else:
 
 st.sidebar.divider()
 
-current_label = st.sidebar.selectbox("Embeddingモデル:", options=list(EMBED_MODELS.keys()), index=0)
+# Embeddingモデル選択
+if 'selected_embed_model' not in st.session_state:
+    st.session_state.selected_embed_model = "nomic-embed-text"
 
-if current_label != st.session_state.last_embed_label:
-    st.session_state.last_embed_label = current_label
-    st.session_state.messages = []
-    st.session_state.scanning = False
-    st.session_state.stop_requested = False
-    st.session_state.scan_percent = 0
-    st.rerun()
+if check_ollama_running():
+    embed_models = get_ollama_embedding_models()
+    if embed_models:
+        selected_embed_model = st.sidebar.selectbox("Embeddingモデル:", options=embed_models, index=0 if st.session_state.selected_embed_model not in embed_models else embed_models.index(st.session_state.selected_embed_model))
+        if selected_embed_model != st.session_state.selected_embed_model:
+            st.session_state.selected_embed_model = selected_embed_model
+            st.session_state.messages = []
+            st.session_state.scanning = False
+            st.session_state.stop_requested = False
+            st.session_state.scan_percent = 0
+            st.rerun()
+    else:
+        st.sidebar.warning("Embeddingモデルがインストールされていません")
+        st.sidebar.info("推奨: `ollama pull nomic-embed-text`")
+        selected_embed_model = "nomic-embed-text"
+else:
+    selected_embed_model = "nomic-embed-text"
 
-selected_embed_id = EMBED_MODELS[current_label]["id"]
-current_db_dir = os.path.normpath(os.path.join(BASE_DB_DIR, EMBED_MODELS[current_label]["dir"]))
+# DBディレクトリ名を生成
+safe_name = selected_embed_model.replace(':', '_').replace('-', '_').replace('.', '_')
+current_db_dir = os.path.normpath(os.path.join(BASE_DB_DIR, f"ollama_{safe_name}"))
 
 st.sidebar.divider()
 st.sidebar.header("📁 データ管理")
@@ -367,7 +388,7 @@ if prompt_input := st.chat_input("質問を入力してください..."):
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     last_prompt = st.session_state.messages[-1]["content"]
     with st.chat_message("assistant"):
-        llm, embeddings = get_models(DEFAULT_LLM, selected_embed_id)
+        llm, embeddings = get_models(DEFAULT_LLM, selected_embed_model)
         if llm and embeddings:
             db = Chroma(persist_directory=current_db_dir, embedding_function=embeddings)
             
