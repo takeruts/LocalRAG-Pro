@@ -91,114 +91,335 @@ class RAGWinApp(ctk.CTk):
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
-        self.font_main = ctk.CTkFont(family="Yu Gothic UI", size=14)
-        self.font_bold = ctk.CTkFont(family="Yu Gothic UI", size=18, weight="bold")
-        self.font_mini = ctk.CTkFont(family="Yu Gothic UI", size=12)
-        self.font_chat = ctk.CTkFont(family="BIZ UDゴシック", size=14)
 
-        self.title("Local RAG Pro - AI Agent Edition")
-        self.geometry("1300x900")
+        # モダンなフォント設定
+        self.font_title = ctk.CTkFont(family="Segoe UI", size=24, weight="bold")
+        self.font_section = ctk.CTkFont(family="Segoe UI", size=16, weight="bold")
+        self.font_main = ctk.CTkFont(family="Segoe UI", size=13)
+        self.font_bold = ctk.CTkFont(family="Segoe UI", size=14, weight="bold")
+        self.font_mini = ctk.CTkFont(family="Segoe UI", size=11)
+        self.font_chat = ctk.CTkFont(family="Segoe UI", size=13)
+
+        self.title("LocalRAG Pro • Ollama Edition")
+        self.geometry("1400x920")
+        self.minsize(1200, 700)
         
-        self.sidebar_width = 340
-        self.grid_columnconfigure(0, minsize=self.sidebar_width) 
+        self.sidebar_width = 360
+        self.grid_columnconfigure(0, minsize=self.sidebar_width)
         self.grid_columnconfigure(1, weight=0)
         self.grid_columnconfigure(2, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
         # --- サイドバー ---
-        self.sidebar = ctk.CTkFrame(self, width=self.sidebar_width, corner_radius=0)
+        self.sidebar = ctk.CTkFrame(self, width=self.sidebar_width, corner_radius=0, fg_color="#1a1a1a")
         self.sidebar.grid(row=0, column=0, sticky="nsew")
-        self.sidebar.grid_propagate(False) 
-        
-        ctk.CTkLabel(self.sidebar, text="設定", font=self.font_bold).pack(pady=(20, 10))
+        self.sidebar.grid_propagate(False)
 
-        # Ollamaステータス表示
-        self.ollama_status_frame = ctk.CTkFrame(self.sidebar)
-        self.ollama_status_frame.pack(pady=5, padx=20, fill="x")
-        self.ollama_status_label = ctk.CTkLabel(self.ollama_status_frame, text="", font=self.font_mini)
-        self.ollama_status_label.pack(pady=5)
+        # タイトルセクション
+        title_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        title_frame.pack(pady=(25, 20), padx=20, fill="x")
 
-        # Ollamaモデル選択
-        ctk.CTkLabel(self.sidebar, text="LLMモデル:", font=self.font_mini, text_color="#AAAAAA").pack(pady=(10,2), padx=20, anchor="w")
+        ctk.CTkLabel(
+            title_frame,
+            text="⚡",
+            font=ctk.CTkFont(size=32)
+        ).pack()
+
+        ctk.CTkLabel(
+            title_frame,
+            text="LocalRAG Pro",
+            font=self.font_title,
+            text_color="#4fc3f7"
+        ).pack()
+
+        ctk.CTkLabel(
+            title_frame,
+            text="Powered by Ollama",
+            font=self.font_mini,
+            text_color="#64b5f6"
+        ).pack()
+
+        # Ollamaステータスカード
+        self.ollama_status_frame = ctk.CTkFrame(
+            self.sidebar,
+            fg_color="#242424",
+            corner_radius=12
+        )
+        self.ollama_status_frame.pack(pady=(0, 15), padx=20, fill="x")
+        self.ollama_status_label = ctk.CTkLabel(
+            self.ollama_status_frame,
+            text="",
+            font=self.font_mini
+        )
+        self.ollama_status_label.pack(pady=10)
+
+        # モデル設定セクション
+        models_section = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        models_section.pack(pady=0, padx=20, fill="x")
+
+        ctk.CTkLabel(
+            models_section,
+            text="🤖 AI Models",
+            font=self.font_section,
+            text_color="#81c784",
+            anchor="w"
+        ).pack(pady=(0, 12), fill="x")
+
+        # LLMモデル選択カード
+        llm_card = ctk.CTkFrame(models_section, fg_color="#242424", corner_radius=10)
+        llm_card.pack(pady=(0, 10), fill="x")
+
+        ctk.CTkLabel(
+            llm_card,
+            text="💬 LLM",
+            font=self.font_mini,
+            text_color="#90caf9",
+            anchor="w"
+        ).pack(pady=(8, 4), padx=12, fill="x")
+
         self.ollama_models = get_ollama_models()
         self.ollama_model_option = ctk.CTkOptionMenu(
-            self.sidebar,
+            llm_card,
             values=self.ollama_models if self.ollama_models else ["モデルなし"],
             font=self.font_main,
-            command=self.on_model_change
+            command=self.on_model_change,
+            fg_color="#1e88e5",
+            button_color="#1565c0",
+            button_hover_color="#0d47a1",
+            dropdown_fg_color="#2a2a2a",
+            corner_radius=8
         )
         if self.ollama_models:
             self.ollama_model = self.ollama_models[0]
             self.ollama_model_option.set(self.ollama_models[0])
-        self.ollama_model_option.pack(pady=2, padx=20, fill="x")
+        self.ollama_model_option.pack(pady=(0, 8), padx=12, fill="x")
 
-        # Embeddingモデル選択
-        ctk.CTkLabel(self.sidebar, text="Embeddingモデル:", font=self.font_mini, text_color="#AAAAAA").pack(pady=(10,2), padx=20, anchor="w")
+        # Embeddingモデル選択カード
+        embed_card = ctk.CTkFrame(models_section, fg_color="#242424", corner_radius=10)
+        embed_card.pack(pady=(0, 0), fill="x")
+
+        ctk.CTkLabel(
+            embed_card,
+            text="📊 Embedding",
+            font=self.font_mini,
+            text_color="#ce93d8",
+            anchor="w"
+        ).pack(pady=(8, 4), padx=12, fill="x")
+
         self.embedding_models = get_ollama_embedding_models()
         self.embedding_model_option = ctk.CTkOptionMenu(
-            self.sidebar,
+            embed_card,
             values=self.embedding_models if self.embedding_models else ["モデルなし"],
             font=self.font_main,
-            command=self.on_embedding_model_change
+            command=self.on_embedding_model_change,
+            fg_color="#7b1fa2",
+            button_color="#6a1b9a",
+            button_hover_color="#4a148c",
+            dropdown_fg_color="#2a2a2a",
+            corner_radius=8
         )
         if self.embedding_models:
             self.embedding_model = self.embedding_models[0]
             self.embedding_model_option.set(self.embedding_models[0])
-        self.embedding_model_option.pack(pady=2, padx=20, fill="x")
+        self.embedding_model_option.pack(pady=(0, 8), padx=12, fill="x")
 
-        self.btn_folder = ctk.CTkButton(self.sidebar, text="📁 フォルダ選択", font=self.font_main, corner_radius=10, command=self.select_folder)
-        self.btn_folder.pack(pady=10, padx=20, fill="x")
+        # データ管理セクション
+        data_section = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        data_section.pack(pady=(20, 0), padx=20, fill="x")
 
-        self.agent_switch = ctk.CTkSwitch(self.sidebar, text="エージェントモード(自律検索)", font=self.font_main)
-        self.agent_switch.pack(pady=10)
+        ctk.CTkLabel(
+            data_section,
+            text="📁 Data Management",
+            font=self.font_section,
+            text_color="#ffb74d",
+            anchor="w"
+        ).pack(pady=(0, 12), fill="x")
 
-        self.btn_scan = ctk.CTkButton(self.sidebar, text="⚡ Indexing 開始/再開", font=self.font_main, fg_color="#1E88E5", command=self.start_scan)
-        self.btn_scan.pack(pady=10, padx=20, fill="x")
+        self.btn_folder = ctk.CTkButton(
+            data_section,
+            text="📁 Select Folder",
+            font=self.font_main,
+            corner_radius=10,
+            command=self.select_folder,
+            fg_color="#424242",
+            hover_color="#616161",
+            height=40
+        )
+        self.btn_folder.pack(pady=(0, 12), fill="x")
 
-        self.btn_stop = ctk.CTkButton(self.sidebar, text="🛑 中断", font=self.font_main, fg_color="#E53935", state="disabled", command=self.request_stop)
-        self.btn_stop.pack(pady=5, padx=20, fill="x")
+        self.agent_switch = ctk.CTkSwitch(
+            data_section,
+            text="🤖 Agent Mode (Autonomous)",
+            font=self.font_main,
+            progress_color="#66bb6a",
+            button_color="#43a047",
+            button_hover_color="#2e7d32"
+        )
+        self.agent_switch.pack(pady=(0, 15))
 
-        self.load_label = ctk.CTkLabel(self.sidebar, text="Ready", font=self.font_mini, text_color="#AAAAAA")
-        self.load_label.pack(pady=(15, 0), padx=20, anchor="w")
-        self.p_bar = ctk.CTkProgressBar(self.sidebar, height=10)
+        # アクションボタングループ
+        action_frame = ctk.CTkFrame(data_section, fg_color="transparent")
+        action_frame.pack(fill="x")
+
+        self.btn_scan = ctk.CTkButton(
+            action_frame,
+            text="⚡ Start Indexing",
+            font=self.font_bold,
+            fg_color="#4caf50",
+            hover_color="#388e3c",
+            command=self.start_scan,
+            corner_radius=10,
+            height=45
+        )
+        self.btn_scan.pack(pady=(0, 8), fill="x")
+
+        self.btn_stop = ctk.CTkButton(
+            action_frame,
+            text="🛑 Stop",
+            font=self.font_main,
+            fg_color="#f44336",
+            hover_color="#d32f2f",
+            state="disabled",
+            command=self.request_stop,
+            corner_radius=10,
+            height=38
+        )
+        self.btn_stop.pack(fill="x")
+
+        # プログレスセクション
+        progress_section = ctk.CTkFrame(self.sidebar, fg_color="#242424", corner_radius=12)
+        progress_section.pack(pady=(20, 0), padx=20, fill="x")
+
+        self.load_label = ctk.CTkLabel(
+            progress_section,
+            text="✨ Ready",
+            font=self.font_mini,
+            text_color="#81c784",
+            anchor="w"
+        )
+        self.load_label.pack(pady=(12, 6), padx=15, anchor="w")
+
+        self.p_bar = ctk.CTkProgressBar(
+            progress_section,
+            height=8,
+            corner_radius=4,
+            progress_color="#4fc3f7",
+            fg_color="#424242"
+        )
         self.p_bar.set(0)
-        self.p_bar.pack(pady=5, padx=20, fill="x")
+        self.p_bar.pack(pady=(0, 8), padx=15, fill="x")
 
-        self.file_name_label = ctk.CTkLabel(self.sidebar, text="", font=self.font_mini, text_color="#64B5F6", wraplength=280, height=45)
-        self.file_name_label.pack(pady=2, padx=20, anchor="w")
+        self.file_name_label = ctk.CTkLabel(
+            progress_section,
+            text="",
+            font=self.font_mini,
+            text_color="#90caf9",
+            wraplength=300,
+            anchor="w",
+            justify="left"
+        )
+        self.file_name_label.pack(pady=(0, 8), padx=15, anchor="w")
 
-        self.error_label = ctk.CTkLabel(self.sidebar, text="", font=self.font_mini, text_color="#EF5350", wraplength=280)
-        self.error_label.pack(pady=2, padx=20, anchor="w")
+        self.error_label = ctk.CTkLabel(
+            progress_section,
+            text="",
+            font=self.font_mini,
+            text_color="#ef5350",
+            wraplength=300,
+            anchor="w",
+            justify="left"
+        )
+        self.error_label.pack(pady=(0, 12), padx=15, anchor="w")
 
         self.db_label = ctk.CTkLabel(self.sidebar, text="DB登録: ---", font=self.font_mini, text_color="#FFB74D")
         self.db_label.pack(pady=(5, 0), padx=20, anchor="w")
 
-        self.source_frame = ctk.CTkScrollableFrame(self.sidebar, label_text="参照資料リスト", fg_color="transparent")
-        self.source_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        # 参照資料セクション
+        sources_header = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        sources_header.pack(pady=(10, 5), padx=20, fill="x")
 
-        self.resizer = ctk.CTkFrame(self, width=4, cursor="sb_h_double_arrow", fg_color="#333333")
+        ctk.CTkLabel(
+            sources_header,
+            text="📚 Sources",
+            font=self.font_section,
+            text_color="#ba68c8",
+            anchor="w"
+        ).pack(fill="x")
+
+        self.source_frame = ctk.CTkScrollableFrame(
+            self.sidebar,
+            fg_color="#242424",
+            corner_radius=10
+        )
+        self.source_frame.pack(fill="both", expand=True, padx=20, pady=(0, 15))
+
+        # リサイザー
+        self.resizer = ctk.CTkFrame(self, width=3, cursor="sb_h_double_arrow", fg_color="#2a2a2a")
         self.resizer.grid(row=0, column=1, sticky="ns")
         self.resizer.bind("<B1-Motion>", self.on_resize)
 
-        # チャットエリア
-        self.chat_frame = ctk.CTkFrame(self, fg_color="#121212", corner_radius=15)
-        self.chat_frame.grid(row=0, column=2, padx=15, pady=15, sticky="nsew")
+        # メインチャットエリア
+        self.chat_frame = ctk.CTkFrame(self, fg_color="#0d0d0d", corner_radius=0)
+        self.chat_frame.grid(row=0, column=2, padx=0, pady=0, sticky="nsew")
         self.chat_frame.grid_columnconfigure(0, weight=1)
-        self.chat_frame.grid_rowconfigure(0, weight=1)
+        self.chat_frame.grid_rowconfigure(1, weight=1)  # チャット表示エリアを伸縮可能に
 
-        self.chat_display = ctk.CTkTextbox(self.chat_frame, state="disabled", font=self.font_chat, fg_color="#1E1E1E", wrap="word")
-        self.chat_display.grid(row=0, column=0, padx=15, pady=15, sticky="nsew")
+        # チャットヘッダー
+        chat_header = ctk.CTkFrame(self.chat_frame, fg_color="#1a1a1a", height=60)
+        chat_header.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
+        chat_header.grid_columnconfigure(0, weight=1)
+        chat_header.grid_propagate(False)
 
-        self.input_area = ctk.CTkFrame(self.chat_frame, fg_color="transparent")
-        self.input_area.grid(row=1, column=0, padx=15, pady=15, sticky="ew")
+        ctk.CTkLabel(
+            chat_header,
+            text="💬 Chat",
+            font=self.font_section,
+            text_color="#4fc3f7",
+            anchor="w"
+        ).pack(side="left", padx=20, pady=15)
+
+        # チャット表示エリア
+        self.chat_display = ctk.CTkTextbox(
+            self.chat_frame,
+            state="disabled",
+            font=self.font_chat,
+            fg_color="#1a1a1a",
+            wrap="word",
+            corner_radius=0,
+            border_width=0
+        )
+        self.chat_display.grid(row=1, column=0, padx=20, pady=(10, 10), sticky="nsew")
+
+        # 入力エリア
+        self.input_area = ctk.CTkFrame(self.chat_frame, fg_color="#1a1a1a", corner_radius=0)
+        self.input_area.grid(row=2, column=0, padx=20, pady=(0, 20), sticky="ew")
         self.input_area.grid_columnconfigure(0, weight=1)
 
-        self.entry = ctk.CTkEntry(self.input_area, placeholder_text="AIに質問する...", height=50, corner_radius=12)
-        self.entry.grid(row=0, column=0, sticky="ew")
+        self.entry = ctk.CTkEntry(
+            self.input_area,
+            placeholder_text="💬 Ask anything...",
+            height=55,
+            corner_radius=28,
+            font=self.font_main,
+            fg_color="#242424",
+            border_color="#424242",
+            border_width=2
+        )
+        self.entry.grid(row=0, column=0, sticky="ew", padx=(0, 12))
         self.entry.bind("<Return>", lambda e: self.send_query())
 
-        self.btn_send = ctk.CTkButton(self.input_area, text="送信", width=100, height=50, command=self.send_query)
-        self.btn_send.grid(row=0, column=1, padx=(12, 0))
+        self.btn_send = ctk.CTkButton(
+            self.input_area,
+            text="→",
+            width=55,
+            height=55,
+            command=self.send_query,
+            corner_radius=28,
+            font=ctk.CTkFont(size=24),
+            fg_color="#1e88e5",
+            hover_color="#1565c0"
+        )
+        self.btn_send.grid(row=0, column=1)
 
         # 起動時にOllamaステータスをチェック
         self.after(500, self.check_ollama_status)
