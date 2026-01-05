@@ -193,8 +193,8 @@ impl<D: VectorDatabase> RagPipeline<D> {
                 .embed_batch_with_progress(
                     &self.embedding_model,
                     texts.clone(),
-                    50,  // バッチサイズ
-                    10,  // 並列数
+                    30,  // バッチサイズ（タイムアウト対策で削減）
+                    5,   // 並列数（タイムアウト対策で削減）
                     move |current, total| {
                         let _ = embed_progress_tx.try_send((current, total));
                     },

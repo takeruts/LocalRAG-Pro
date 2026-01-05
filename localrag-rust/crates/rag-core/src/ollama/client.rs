@@ -21,7 +21,7 @@ impl OllamaClient {
         Self {
             base_url: base_url.into(),
             client: Client::new(),
-            timeout: Duration::from_secs(120),
+            timeout: Duration::from_secs(300), // 5分に延長
         }
     }
 
