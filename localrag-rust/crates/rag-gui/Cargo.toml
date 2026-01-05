@@ -1,0 +1,48 @@
+[package]
+name = "rag-gui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Core RAG library
+rag-core = { path = "../rag-core" }
+
+# GUI framework
+eframe = { version = "0.30", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "persistence",
+] }
+egui = "0.30"
+egui_extras = { version = "0.30", features = ["all_loaders"] }
+
+# Async runtime
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tokio-util = "0.7"
+
+# HTTP client
+reqwest = { workspace = true }
+
+# Utility
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# File dialogs
+rfd = "0.15"
+
+# System integration
+open = "5.0"
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Japanese font support
+include_dir = "0.7"
+
+
+[[bin]]
+name = "rag-gui"
+path = "src/main.rs"
