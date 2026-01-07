@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 
 /// メッセージの種類
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum MessageRole {
     User,
     Assistant,
@@ -36,8 +36,10 @@ impl ChatMessage {
 pub struct IndexStats {
     pub total_files: usize,
     pub indexed_files: usize,
+    pub skipped_files: usize,
     pub total_chunks: usize,
     pub total_embeddings: usize,
+    pub indexed_folder: Option<String>,  // インデックスされたフォルダのパス
 }
 
 /// ソース情報
@@ -64,6 +66,7 @@ pub enum Command {
 pub enum Event {
     FolderSelected(PathBuf),
     IndexProgress { progress: f32, file: String },
+    IndexStatsUpdate { stats: IndexStats },  // リアルタイム統計更新
     IndexComplete { stats: IndexStats },
     QueryChunk(String),
     QueryComplete { sources: Vec<SourceInfo> },
@@ -110,7 +113,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(command_tx: mpsc::Sender<Command>, event_rx: mpsc::Receiver<Event>) -> Self {
         Self {
-            llm_model: "gemma2:2b".to_string(),
+            llm_model: "gemma3:4b".to_string(),
             embedding_model: "nomic-embed-text".to_string(),
             available_llm_models: vec![],
             available_embedding_models: vec![],
@@ -142,6 +145,10 @@ impl AppState {
                 self.is_indexing = true;
                 self.index_progress = progress;
                 self.current_file = file;
+            }
+            Event::IndexStatsUpdate { stats } => {
+                // リアルタイム統計更新（インデックス中は進行状態を維持）
+                self.index_stats = stats;
             }
             Event::IndexComplete { stats } => {
                 self.is_indexing = false;

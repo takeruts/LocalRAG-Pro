@@ -1,8 +1,10 @@
 pub mod types;
 pub mod chroma;
+pub mod hnsw;
 
 pub use types::{VectorDbConfig, SearchResult, VectorDbStats};
 pub use chroma::ChromaClient;
+pub use hnsw::{HnswClient, HnswConfig};
 
 use async_trait::async_trait;
 use std::collections::HashMap;

@@ -6,12 +6,31 @@ mod ui;
 use eframe::egui;
 
 fn main() -> eframe::Result {
-    // ロギング初期化
+    // ロギング初期化（DEBUGレベルに変更 + ファイル出力）
+    use std::fs::File;
+    use std::path::PathBuf;
+    use tracing_subscriber::fmt::writer::MakeWriterExt;
+
+    // 実行ファイルと同じディレクトリにログを作成
+    let exe_path = std::env::current_exe().expect("Failed to get exe path");
+    let exe_dir = exe_path.parent().expect("Failed to get exe directory");
+    let log_path = exe_dir.join("localrag_debug.log");
+
+    println!("Creating log file at: {:?}", log_path);
+    let log_file = File::create(&log_path).expect("Failed to create log file");
+    let (non_blocking, guard) = tracing_appender::non_blocking(log_file);
+
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_max_level(tracing::Level::DEBUG)
+        .with_target(false)
+        .with_thread_ids(true)
+        .with_writer(std::io::stdout.and(non_blocking))
         .init();
 
+    tracing::info!("======================================");
     tracing::info!("Starting LocalRAG Pro GUI");
+    tracing::info!("Log file: {:?}", log_path);
+    tracing::info!("======================================");
 
     // ネイティブオプション設定
     let native_options = eframe::NativeOptions {
@@ -23,11 +42,16 @@ fn main() -> eframe::Result {
     };
 
     // アプリ起動
-    eframe::run_native(
+    let result = eframe::run_native(
         "LocalRAG Pro",
         native_options,
         Box::new(|cc| Ok(Box::new(app::RagApp::new(cc)))),
-    )
+    );
+
+    // guardを保持してログをフラッシュ
+    drop(guard);
+
+    result
 }
 
 /// アイコンをロード（オプション）

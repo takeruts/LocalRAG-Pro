@@ -11,6 +11,31 @@ use crate::vectordb::{SearchResult, VectorDatabase};
 
 use super::types::{IndexProgress, IndexStats, QueryResponse};
 
+/// パスを正規化（絶対パス化して統一形式に変換）
+fn normalize_path(path: &Path) -> String {
+    // 絶対パスに変換
+    let abs_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    };
+
+    // canonicalizeを試みる（シンボリックリンク解決、パス正規化）
+    let normalized = abs_path.canonicalize().unwrap_or(abs_path);
+
+    // Windowsのプレフィックス(\\?\)を削除して表示形式に変換
+    let path_str = normalized.display().to_string();
+
+    // Windows拡張パスプレフィックスを削除
+    if path_str.starts_with(r"\\?\") {
+        path_str[4..].to_string()
+    } else {
+        path_str
+    }
+}
+
 /// RAGパイプライン
 #[derive(Clone)]
 pub struct RagPipeline<D: VectorDatabase> {
@@ -48,6 +73,11 @@ impl<D: VectorDatabase> RagPipeline<D> {
         self
     }
 
+    /// ベクトルDBのドキュメント数を取得
+    pub async fn count(&self) -> Result<usize> {
+        self.vector_db.count().await
+    }
+
     /// ディレクトリをインデックス作成
     pub async fn index_directory(
         &self,
@@ -63,11 +93,23 @@ impl<D: VectorDatabase> RagPipeline<D> {
         }
 
         // 2. 既にインデックス済みのソースを取得（差分検出）
-        let indexed_sources: HashSet<String> = self
+        let indexed_sources_raw: Vec<String> = self
             .vector_db
             .get_indexed_sources()
-            .await?
-            .into_iter()
+            .await?;
+
+        // インデックス済みソースも正規化してHashSetに変換
+        let indexed_sources: HashSet<String> = indexed_sources_raw
+            .iter()
+            .map(|s| {
+                // 既存のパス文字列を正規化（存在しないファイルはそのまま）
+                let path = Path::new(s);
+                if path.exists() {
+                    normalize_path(path)
+                } else {
+                    s.clone()
+                }
+            })
             .collect();
 
         tracing::info!("Found {} already indexed sources", indexed_sources.len());
@@ -78,14 +120,22 @@ impl<D: VectorDatabase> RagPipeline<D> {
 
         stats.total_files = all_files.len();
 
-        // 差分検出: 新しいファイルのみ
+        // 差分検出: 新しいファイルのみ（正規化パスで比較）
         let new_files: Vec<PathBuf> = all_files
             .into_iter()
             .filter(|f| {
-                let normalized = f.display().to_string();
-                !indexed_sources.contains(&normalized)
+                let normalized = normalize_path(f);
+                let is_indexed = indexed_sources.contains(&normalized);
+                if is_indexed {
+                    tracing::debug!("Skipping already indexed file: {}", normalized);
+                }
+                !is_indexed
             })
             .collect();
+
+        // スキップされたファイル数を記録
+        stats.skipped_files = stats.total_files - new_files.len();
+        tracing::info!("Skipping {} already indexed files", stats.skipped_files);
 
         if new_files.is_empty() {
             tracing::info!("All files are already indexed");
@@ -97,169 +147,190 @@ impl<D: VectorDatabase> RagPipeline<D> {
 
         tracing::info!("Found {} new files to index", new_files.len());
 
-        // 4. ドキュメント読み込み（並列）
-        let (load_progress_tx, mut load_progress_rx) = mpsc::channel::<crate::document::LoadProgress>(100);
+        // 100ファイルずつバッチ処理して即座にDBに保存
+        // これにより途中で停止しても処理済みファイルは保存される
+        const FILE_BATCH_SIZE: usize = 100;
+        let total_new_files = new_files.len();
 
-        let loader_clone = loader.clone();
-        let new_files_clone = new_files.clone();
-        let progress_tx_clone = progress_tx.clone();
-
-        tokio::spawn(async move {
-            while let Some(load_prog) = load_progress_rx.recv().await {
-                if let Some(tx) = &progress_tx_clone {
-                    let _ = tx
-                        .send(IndexProgress::Loading {
-                            current: load_prog.current,
-                            total: load_prog.total,
-                            file: load_prog.current_file,
-                        })
-                        .await;
-                }
-            }
-        });
-
-        let documents = loader_clone
-            .load_files(&new_files_clone, Some(load_progress_tx))
-            .await?;
-
-        if documents.is_empty() {
-            tracing::warn!("No documents were loaded");
-            stats.skipped_files = new_files.len();
-            if let Some(tx) = progress_tx {
-                let _ = tx.send(IndexProgress::Complete { stats: stats.clone() }).await;
-            }
-            return Ok(stats);
-        }
-
-        stats.indexed_files = documents.len();
-
-        // 5. テキスト分割
-        if let Some(tx) = &progress_tx {
-            let _ = tx
-                .send(IndexProgress::Splitting {
-                    current: 0,
-                    total: documents.len(),
-                })
-                .await;
-        }
-
-        let splits = self.text_splitter.split_documents(documents);
-        stats.total_chunks = splits.len();
-
-        tracing::info!("Split into {} chunks", splits.len());
-
-        if let Some(tx) = &progress_tx {
-            let _ = tx
-                .send(IndexProgress::Splitting {
-                    current: splits.len(),
-                    total: splits.len(),
-                })
-                .await;
-        }
-
-        // 6. Embedding生成（バッチ並列、進捗報告付き）
-        let texts: Vec<String> = splits.iter().map(|d| d.content.clone()).collect();
-        let total_texts = texts.len();
-
-        tracing::info!("Starting embedding generation for {} texts", total_texts);
-
-        if let Some(tx) = &progress_tx {
-            let _ = tx
-                .send(IndexProgress::Embedding {
-                    current: 0,
-                    total: total_texts,
-                })
-                .await;
-        }
-
-        // 進捗チャネルを作成
-        let (embed_progress_tx, mut embed_progress_rx) = tokio::sync::mpsc::channel::<(usize, usize)>(100);
-
-        // 進捗報告タスク
-        let progress_tx_clone = progress_tx.clone();
-        let progress_task = tokio::spawn(async move {
-            while let Some((current, total)) = embed_progress_rx.recv().await {
-                tracing::debug!("Embedding progress: {}/{}", current, total);
-                if let Some(tx) = &progress_tx_clone {
-                    let _ = tx.send(IndexProgress::Embedding { current, total }).await;
-                }
-            }
-        });
-
-        // Embedding生成
-        let embeddings = {
-            let embeddings = self
-                .ollama_client
-                .embed_batch_with_progress(
-                    &self.embedding_model,
-                    texts.clone(),
-                    30,  // バッチサイズ（タイムアウト対策で削減）
-                    5,   // 並列数（タイムアウト対策で削減）
-                    move |current, total| {
-                        let _ = embed_progress_tx.try_send((current, total));
-                    },
-                )
-                .await
-                .map_err(|e| RagError::Embedding(format!("Failed to generate embeddings: {}", e)))?;
-
-            // 進捗タスクを終了（チャネルがクロージャで消費されたので自動的にクローズされる）
-            let _ = progress_task.await;
-            embeddings
-        };
-
-        stats.total_embeddings = embeddings.len();
-
-        tracing::info!("Generated {} embeddings", embeddings.len());
-
-        // 7. メタデータ準備
-        let metadatas: Vec<_> = splits
-            .iter()
-            .map(|d| d.metadata_to_map())
-            .collect();
-
-        // 8. ベクトルDB登録（バッチ分割）
-        let max_batch_size = 5000; // ChromaDBの制限より小さい値
-        let total_docs = embeddings.len();
-
-        if let Some(tx) = &progress_tx {
-            let _ = tx
-                .send(IndexProgress::Storing {
-                    current: 0,
-                    total: total_docs,
-                })
-                .await;
-        }
-
-        // バッチに分割して保存
-        for (batch_idx, chunk_size) in (0..total_docs).step_by(max_batch_size).enumerate() {
-            let end = std::cmp::min(chunk_size + max_batch_size, total_docs);
-            let batch_embeddings = embeddings[chunk_size..end].to_vec();
-            let batch_texts = texts[chunk_size..end].to_vec();
-            let batch_metadatas = metadatas[chunk_size..end].to_vec();
+        for (file_batch_idx, file_chunk) in new_files.chunks(FILE_BATCH_SIZE).enumerate() {
+            let batch_start = file_batch_idx * FILE_BATCH_SIZE;
+            let batch_end = std::cmp::min(batch_start + FILE_BATCH_SIZE, total_new_files);
 
             tracing::info!(
-                "Storing batch {}: {} documents ({}-{})",
-                batch_idx + 1,
-                batch_embeddings.len(),
-                chunk_size,
-                end
+                "Processing file batch {}: files {}-{} of {}",
+                file_batch_idx + 1,
+                batch_start + 1,
+                batch_end,
+                total_new_files
             );
 
-            self.vector_db
-                .add_documents(batch_embeddings, batch_texts, batch_metadatas, None)
+            // 4. ドキュメント読み込み（バッチ分）
+            let (load_progress_tx, mut load_progress_rx) = mpsc::channel::<crate::document::LoadProgress>(100);
+
+            let loader_clone = loader.clone();
+            let file_chunk_vec: Vec<PathBuf> = file_chunk.to_vec();
+            let progress_tx_clone = progress_tx.clone();
+            let batch_offset = batch_start;
+
+            tokio::spawn(async move {
+                while let Some(load_prog) = load_progress_rx.recv().await {
+                    if let Some(tx) = &progress_tx_clone {
+                        let _ = tx
+                            .send(IndexProgress::Loading {
+                                current: batch_offset + load_prog.current,
+                                total: total_new_files,
+                                file: load_prog.current_file,
+                            })
+                            .await;
+                    }
+                }
+            });
+
+            let batch_file_count = file_chunk_vec.len();
+            let documents = loader_clone
+                .load_files(&file_chunk_vec, Some(load_progress_tx))
                 .await?;
+
+            if documents.is_empty() {
+                tracing::warn!("No documents loaded in batch {}", file_batch_idx + 1);
+                // ドキュメントがロードされなくてもファイルは処理済み
+                stats.indexed_files += batch_file_count;
+                continue;
+            }
+
+            // ファイル数をカウント（ドキュメント数ではなく実際のファイル数）
+            stats.indexed_files += batch_file_count;
+
+            // 5. テキスト分割
+            if let Some(tx) = &progress_tx {
+                let _ = tx
+                    .send(IndexProgress::Splitting {
+                        current: batch_start,
+                        total: total_new_files,
+                    })
+                    .await;
+            }
+
+            let splits = self.text_splitter.split_documents(documents);
+            stats.total_chunks += splits.len();
+
+            tracing::info!("Batch {}: Split into {} chunks", file_batch_idx + 1, splits.len());
+
+            if splits.is_empty() {
+                continue;
+            }
+
+            // 6. Embedding生成
+            let texts: Vec<String> = splits.iter().map(|d| d.content.clone()).collect();
+            let batch_texts_len = texts.len();
+
+            tracing::info!("Batch {}: Generating embeddings for {} texts", file_batch_idx + 1, batch_texts_len);
 
             if let Some(tx) = &progress_tx {
                 let _ = tx
+                    .send(IndexProgress::Embedding {
+                        current: batch_start,
+                        total: total_new_files,
+                    })
+                    .await;
+            }
+
+            // 進捗チャネルを作成
+            let (embed_progress_tx, mut embed_progress_rx) = tokio::sync::mpsc::channel::<(usize, usize)>(100);
+
+            // 進捗報告タスク
+            let progress_tx_clone = progress_tx.clone();
+            let progress_task = tokio::spawn(async move {
+                while let Some((current, total)) = embed_progress_rx.recv().await {
+                    tracing::debug!("Embedding progress: {}/{}", current, total);
+                    if let Some(tx) = &progress_tx_clone {
+                        let _ = tx.send(IndexProgress::Embedding { current, total }).await;
+                    }
+                }
+            });
+
+            // Embedding生成
+            let embeddings = {
+                let embeddings = self
+                    .ollama_client
+                    .embed_batch_with_progress(
+                        &self.embedding_model,
+                        texts.clone(),
+                        30,  // バッチサイズ
+                        5,   // 並列数
+                        move |current, total| {
+                            let _ = embed_progress_tx.try_send((current, total));
+                        },
+                    )
+                    .await
+                    .map_err(|e| RagError::Embedding(format!("Failed to generate embeddings: {}", e)))?;
+
+                let _ = progress_task.await;
+                embeddings
+            };
+
+            stats.total_embeddings += embeddings.len();
+
+            tracing::info!("Batch {}: Generated {} embeddings", file_batch_idx + 1, embeddings.len());
+
+            // 7. メタデータ準備
+            let metadatas: Vec<_> = splits
+                .iter()
+                .map(|d| d.metadata_to_map())
+                .collect();
+
+            // 8. ベクトルDB登録（即座に保存）
+            if let Some(tx) = &progress_tx {
+                let _ = tx
                     .send(IndexProgress::Storing {
-                        current: end,
-                        total: total_docs,
+                        current: batch_start,
+                        total: total_new_files,
+                    })
+                    .await;
+            }
+
+            tracing::info!(
+                "Batch {}: Storing {} documents to database",
+                file_batch_idx + 1,
+                embeddings.len()
+            );
+
+            self.vector_db
+                .add_documents(embeddings, texts, metadatas, None)
+                .await?;
+
+            tracing::info!(
+                "Batch {}: Successfully stored to database. Total indexed so far: {} files, {} embeddings",
+                file_batch_idx + 1,
+                stats.indexed_files,
+                stats.total_embeddings
+            );
+
+            // バッチ完了通知（リアルタイム統計更新）
+            if let Some(tx) = &progress_tx {
+                // 進捗通知
+                let _ = tx
+                    .send(IndexProgress::Storing {
+                        current: batch_end,
+                        total: total_new_files,
+                    })
+                    .await;
+
+                // リアルタイム統計更新
+                let _ = tx
+                    .send(IndexProgress::BatchComplete {
+                        stats: stats.clone(),
                     })
                     .await;
             }
         }
 
-        tracing::info!("Stored all {} documents in vector database", total_docs);
+        tracing::info!(
+            "Indexing complete: {} files, {} chunks, {} embeddings",
+            stats.indexed_files,
+            stats.total_chunks,
+            stats.total_embeddings
+        );
 
         // 9. 完了
         if let Some(tx) = progress_tx {

@@ -40,3 +40,7 @@ tokio-stream = "0.1"
 
 # UUID生成
 uuid = { version = "1.10", features = ["v4"] }
+
+# ベクトルデータベース (HNSW - Pure Rust)
+instant-distance = "0.6"
+bincode = "1.3"

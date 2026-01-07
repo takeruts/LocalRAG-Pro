@@ -28,6 +28,7 @@ reqwest = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tracing-appender = "0.2"
 
 # File dialogs
 rfd = "0.15"

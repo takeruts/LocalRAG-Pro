@@ -138,10 +138,16 @@ impl<D: VectorDatabase> AgentPipeline<D> {
     /// 質問からキーワードを抽出
     async fn extract_keywords(&self, question: &str) -> Result<Vec<String>> {
         let analysis_prompt = format!(
-            "以下の質問に答えるために、どのような資料を検索すべきか分析してください。\n\
-             検索キーワードを3つ提案してください（カンマ区切り）。\n\n\
-             質問: {}\n\n\
-             検索キーワード:",
+            "タスク: 以下の質問に対して検索キーワードを3つ抽出してください。\n\n\
+             ルール:\n\
+             - キーワードは短く（1-3単語）\n\
+             - カンマ区切りで出力\n\
+             - 説明は不要\n\n\
+             例:\n\
+             質問: 再現答案の結果を調べたい\n\
+             出力: 再現答案, 結果, 採点\n\n\
+             質問: {}\n\
+             出力:",
             question
         );
 
@@ -151,13 +157,30 @@ impl<D: VectorDatabase> AgentPipeline<D> {
             .generate(&self.pipeline.llm_model, &analysis_prompt)
             .await?;
 
-        // キーワードをパース
-        let keywords: Vec<String> = keywords_response
-            .split(',')
+        tracing::debug!("Raw keywords response: {}", keywords_response);
+
+        // キーワードをパース（最初の行のみ使用、長い応答を避ける）
+        let first_line = keywords_response
+            .lines()
+            .next()
+            .unwrap_or(&keywords_response);
+
+        // カンマまたは読点で分割
+        let keywords: Vec<String> = first_line
+            .split(|c| c == ',' || c == '、' || c == '・')
             .take(3)
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
+            .map(|s| {
+                // 余分な文字を除去（番号、引用符、マークダウンなど）
+                s.trim()
+                    .trim_matches(|c| c == '"' || c == '\'' || c == '「' || c == '」'
+                        || c == '*' || c == '-' || c == '1' || c == '2' || c == '3'
+                        || c == '.' || c == ':' || c == ' ')
+                    .to_string()
+            })
+            .filter(|s| !s.is_empty() && s.len() < 50) // 50文字以上は除外
             .collect();
+
+        tracing::info!("Parsed keywords: {:?}", keywords);
 
         // フォールバック: キーワードが抽出できない場合は元の質問を使用
         if keywords.is_empty() {

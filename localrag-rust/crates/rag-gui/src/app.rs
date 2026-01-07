@@ -64,6 +64,8 @@ impl RagApp {
 
     /// 新しいアプリを作成
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        tracing::info!("Initializing RagApp...");
+
         // 日本語フォント設定
         Self::setup_fonts(&cc.egui_ctx);
 
@@ -73,25 +75,33 @@ impl RagApp {
         cc.egui_ctx.set_style(style);
 
         // 非同期ランタイム
+        tracing::info!("Creating Tokio runtime...");
         let runtime = tokio::runtime::Runtime::new().unwrap();
 
         // チャネル作成
+        tracing::info!("Creating communication channels...");
         let (command_tx, command_rx) = mpsc::channel(100);
         let (event_tx, event_rx) = mpsc::channel(100);
 
         // バックエンド起動
+        tracing::info!("Starting backend...");
         let backend = Arc::new(Backend::new(event_tx));
         let backend_clone = backend.clone();
 
         runtime.spawn(async move {
+            tracing::info!("Backend task started");
             backend_clone.run(command_rx).await;
         });
 
         // 状態初期化
+        tracing::info!("Initializing app state...");
         let state = AppState::new(command_tx, event_rx);
 
         // 初期化コマンド
+        tracing::info!("Sending initial commands...");
         state.send_command(Command::RefreshModels);
+
+        tracing::info!("RagApp initialization complete!");
 
         Self {
             state,

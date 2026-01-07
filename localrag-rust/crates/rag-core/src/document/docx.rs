@@ -66,7 +66,13 @@ impl DocumentLoader for DocxLoader {
             RagError::DocumentLoad(format!("Failed to read DOCX file {}: {}", path.display(), e))
         })?;
 
-        let path_str = path.display().to_string();
+        // 正規化されたパスを使用（差分検出で一致させるため）
+        let path_str = path.canonicalize()
+            .map(|p| {
+                let s = p.display().to_string();
+                if s.starts_with(r"\\?\") { s[4..].to_string() } else { s }
+            })
+            .unwrap_or_else(|_| path.display().to_string());
 
         // DOCX解析とテキスト抽出（CPU-bound処理なのでspawn_blocking）
         let content = tokio::task::spawn_blocking(move || -> Result<String> {
@@ -81,7 +87,7 @@ impl DocumentLoader for DocxLoader {
             return Ok(vec![]);
         }
 
-        let metadata = Metadata::new(path.display().to_string(), FileType::Docx);
+        let metadata = Metadata::new(path_str, FileType::Docx);
 
         Ok(vec![Document::new(content, metadata)])
     }

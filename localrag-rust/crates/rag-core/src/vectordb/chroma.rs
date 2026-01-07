@@ -252,22 +252,38 @@ impl VectorDatabase for ChromaClient {
     }
 
     async fn count(&self) -> Result<usize> {
+        // コレクション存在確認
+        if !self.collection_exists().await? {
+            return Ok(0);
+        }
+
         let collection_id = self.get_collection_id().await?;
+
+        // getエンドポイントを使ってドキュメント数を取得
         let url = format!(
-            "{}/api/v1/collections/{}/count",
+            "{}/api/v1/collections/{}/get",
             self.base_url, collection_id
         );
 
-        let response = self.client.get(&url).send().await?;
+        let response = self.client
+            .post(&url)
+            .json(&serde_json::json!({}))
+            .send()
+            .await?;
 
         if !response.status().is_success() {
             return Err(RagError::VectorDb(format!(
-                "Failed to get count: {}",
+                "Failed to get documents: {}",
                 response.status()
             )));
         }
 
-        let count: usize = response.json().await?;
+        let get_response: GetResponse = response.json().await?;
+
+        // ドキュメント数を返す
+        let count = get_response.ids.len();
+        tracing::info!("ChromaDB document count: {}", count);
+
         Ok(count)
     }
 }

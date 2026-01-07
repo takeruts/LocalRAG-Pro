@@ -33,6 +33,10 @@ pub enum IndexProgress {
         current: usize,
         total: usize,
     },
+    /// バッチ完了（リアルタイム統計更新用）
+    BatchComplete {
+        stats: IndexStats,
+    },
     /// 完了
     Complete {
         stats: IndexStats,
@@ -53,6 +57,7 @@ impl IndexProgress {
                     (*current as f32 / *total as f32) * 100.0
                 }
             }
+            IndexProgress::BatchComplete { .. } => 50.0, // バッチ進行中
             IndexProgress::Complete { .. } => 100.0,
         }
     }

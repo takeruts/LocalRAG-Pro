@@ -74,7 +74,15 @@ impl DocumentLoader for TxtLoader {
             return Ok(vec![]);
         }
 
-        let metadata = Metadata::new(path.display().to_string(), FileType::Txt);
+        // 正規化されたパスを使用（差分検出で一致させるため）
+        let normalized_path = path.canonicalize()
+            .map(|p| {
+                let s = p.display().to_string();
+                // Windows拡張パスプレフィックスを削除
+                if s.starts_with(r"\\?\") { s[4..].to_string() } else { s }
+            })
+            .unwrap_or_else(|_| path.display().to_string());
+        let metadata = Metadata::new(normalized_path, FileType::Txt);
 
         Ok(vec![Document::new(content, metadata)])
     }

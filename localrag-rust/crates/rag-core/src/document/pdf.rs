@@ -51,7 +51,13 @@ impl DocumentLoader for PdfLoader {
             RagError::DocumentLoad(format!("Failed to read PDF file {}: {}", path.display(), e))
         })?;
 
-        let path_str = path.display().to_string();
+        // 正規化されたパスを使用（差分検出で一致させるため）
+        let path_str = path.canonicalize()
+            .map(|p| {
+                let s = p.display().to_string();
+                if s.starts_with(r"\\?\") { s[4..].to_string() } else { s }
+            })
+            .unwrap_or_else(|_| path.display().to_string());
 
         // PDF解析とテキスト抽出（CPU-bound処理なのでspawn_blocking）
         let documents = tokio::task::spawn_blocking(move || -> Result<Vec<Document>> {
