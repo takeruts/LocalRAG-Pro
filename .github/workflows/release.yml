@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-tauri:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './localrag-tauri/src-tauri -> target'
+
+      - name: Install frontend dependencies
+        working-directory: ./localrag-tauri
+        run: npm install
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: ./localrag-tauri
+          tagName: ${{ github.ref_name }}
+          releaseName: 'LocalRAG Pro ${{ github.ref_name }}'
+          releaseBody: |
+            See the assets to download and install this version.
+
+            ## Installation
+            - **Windows**: Download and run `LocalRAG.Pro_x.x.x_x64-setup.exe`
+
+            ## Requirements
+            - [Ollama](https://ollama.ai/) must be installed and running
+          releaseDraft: false
+          prerelease: false
+
+  update-latest-json:
+    needs: build-tauri
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get release info
+        id: release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const release = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: context.ref.replace('refs/tags/', '')
+            });
+
+            const assets = release.data.assets;
+            const nsisAsset = assets.find(a => a.name.endsWith('-setup.exe'));
+            const sigAsset = assets.find(a => a.name.endsWith('-setup.exe.sig'));
+
+            if (nsisAsset && sigAsset) {
+              const sigResponse = await fetch(sigAsset.browser_download_url);
+              const signature = await sigResponse.text();
+
+              core.setOutput('version', release.data.tag_name.replace('v', ''));
+              core.setOutput('notes', release.data.body || 'New release');
+              core.setOutput('pub_date', release.data.published_at);
+              core.setOutput('url', nsisAsset.browser_download_url);
+              core.setOutput('signature', signature.trim());
+            }
+
+      - name: Update latest.json
+        run: |
+          cat > latest.json << EOF
+          {
+            "version": "${{ steps.release.outputs.version }}",
+            "notes": "${{ steps.release.outputs.notes }}",
+            "pub_date": "${{ steps.release.outputs.pub_date }}",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "${{ steps.release.outputs.signature }}",
+                "url": "${{ steps.release.outputs.url }}"
+              }
+            }
+          }
+          EOF
+
+      - name: Commit and push latest.json
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add latest.json
+          git commit -m "Update latest.json for ${{ github.ref_name }}"
+          git push

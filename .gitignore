@@ -26,6 +26,11 @@ package/
 localrag-rust/target/
 localrag-rust/Cargo.lock
 
+# Tauri
+localrag-tauri/node_modules/
+localrag-tauri/dist/
+localrag-tauri/src-tauri/target/
+
 # PyInstaller自動生成specファイル（カスタムspecは保持）
 # win_rag.spec は保持するためコメントアウト
 LocalRAG_Pro.spec

@@ -1,0 +1,11 @@
+{
+  "version": "3.0.0",
+  "notes": "Initial Tauri release with auto-update support",
+  "pub_date": "2026-01-07T00:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "",
+      "url": "https://github.com/takeruts/LocalRAG-Pro/releases/download/v3.0.0/LocalRAG.Pro_3.0.0_x64-setup.exe"
+    }
+  }
+}
