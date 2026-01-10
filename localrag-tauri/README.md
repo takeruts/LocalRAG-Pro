@@ -1,18 +1,19 @@
-# LocalRAG Pro - Tauri Edition
+# CPURAG - Tauri Edition
 
-モダンなデスクトップRAGアプリケーション。Tauri v2 + React + TypeScriptで構築。
+モダンなデスクトップRAGアプリケーション。Tauri v2 + React + TypeScript + Rustで構築。
 
 ## 概要
 
-LocalRAG Pro Tauri Editionは、ローカル環境で動作するRAG（Retrieval-Augmented Generation）システムのデスクトップアプリケーションです。プライバシーを重視し、機密文書を外部に送信することなくAIによる文書検索・質問応答が可能です。
+CPURAG Tauri Editionは、ローカル環境で動作するRAG（Retrieval-Augmented Generation）システムのデスクトップアプリケーションです。プライバシーを重視し、機密文書を外部に送信することなくAIによる文書検索・質問応答が可能です。
 
 ### 主な特徴
 
-- **完全ローカル動作**: Ollama + ChromaDBによるオフラインRAG
+- **完全ローカル動作**: Ollama + HNSWによるオフラインRAG
 - **モダンUI**: React + TailwindCSSによる美しいインターフェース
+- **CPU情報表示**: サイドバーにCPUモデル、コア数、周波数を表示
 - **自動更新**: Tauri Updaterによるアプリの自動更新
 - **クロスプラットフォーム**: Windows対応（macOS/Linux対応予定）
-- **軽量・高速**: Rust製バックエンドによる高いパフォーマンス
+- **軽量・高速**: Rust製バックエンド + HNSWベクトル検索による高いパフォーマンス
 
 ## 技術スタック
 
@@ -22,16 +23,16 @@ LocalRAG Pro Tauri Editionは、ローカル環境で動作するRAG（Retrieval
 | フロントエンド | React 18 + TypeScript |
 | スタイリング | TailwindCSS |
 | ビルドツール | Vite |
-| バックエンド | Rust |
+| バックエンド | Rust (rag-core) |
 | LLM | Ollama |
-| ベクトルDB | ChromaDB |
+| ベクトルDB | HNSW (instant-distance) |
+| システム情報 | sysinfo |
 
 ## 必要条件
 
 - **Node.js**: 18.0以上
 - **Rust**: 1.75以上
 - **Ollama**: インストール済み
-- **Python**: 3.10以上（ChromaDB用）
 
 ## セットアップ
 
@@ -45,7 +46,7 @@ npm install
 ### 2. Ollamaモデルのインストール
 
 ```bash
-ollama pull gemma2:2b
+ollama pull gemma3:4b
 ollama pull nomic-embed-text
 ```
 
@@ -69,8 +70,9 @@ localrag-tauri/
 │   ├── components/           # UIコンポーネント
 │   │   ├── ChatArea.tsx      # チャットエリア
 │   │   ├── MessageBubble.tsx # メッセージ表示
-│   │   ├── Sidebar.tsx       # サイドバー
-│   │   └── SourceInfo.tsx    # ソース情報表示
+│   │   ├── Sidebar.tsx       # サイドバー（CPU情報含む）
+│   │   ├── SourceInfo.tsx    # ソース情報表示
+│   │   └── OllamaSetupGuide.tsx # Ollamaセットアップガイド
 │   ├── hooks/                # カスタムフック
 │   │   ├── useBackend.ts     # バックエンド通信
 │   │   └── useUpdater.ts     # 自動更新
@@ -83,7 +85,7 @@ localrag-tauri/
 │   ├── src/
 │   │   ├── commands/         # Tauriコマンド
 │   │   │   ├── indexing.rs   # インデックス処理
-│   │   │   ├── models.rs     # モデル管理
+│   │   │   ├── models.rs     # モデル管理・システム情報
 │   │   │   └── query.rs      # クエリ処理
 │   │   ├── lib.rs            # ライブラリエントリ
 │   │   ├── main.rs           # アプリエントリ
@@ -98,12 +100,19 @@ localrag-tauri/
 
 ## 機能
 
+### システム情報表示
+
+- CPUモデル名の表示
+- コア数の表示
+- 動作周波数の表示（GHz）
+- Ollamaステータスの監視（安定したヒステリシス付き）
+
 ### ドキュメントインデックス
 
 - フォルダ選択によるバッチインデックス
 - 対応フォーマット: PDF, DOCX, XLSX, TXT, MD
 - 差分インデックス（既存ファイルスキップ）
-- リアルタイム進捗表示
+- リアルタイム進捗表示（フェーズ別: Loading → Splitting → Embedding → Storing）
 
 ### RAGクエリ
 
@@ -144,12 +153,6 @@ npm run dev
 npm run tauri build
 ```
 
-### 署名付きビルド（Windows）
-
-```powershell
-.\build_signed.ps1
-```
-
 ## 設定
 
 ### tauri.conf.json
@@ -158,9 +161,9 @@ npm run tauri build
 
 ```json
 {
-  "productName": "LocalRAG Pro",
-  "version": "3.0.0",
-  "identifier": "com.localrag.pro",
+  "productName": "CPURAG",
+  "version": "1.0.0",
+  "identifier": "com.cpurag.app",
   "plugins": {
     "updater": {
       "endpoints": [
@@ -171,27 +174,11 @@ npm run tauri build
 }
 ```
 
-### 自動更新の設定
-
-`latest.json`でリリース情報を管理:
-
-```json
-{
-  "version": "3.0.0",
-  "platforms": {
-    "windows-x86_64": {
-      "url": "https://github.com/.../releases/download/v3.0.0/LocalRAG-Pro_3.0.0_x64-setup.exe",
-      "signature": "..."
-    }
-  }
-}
-```
-
 ## リリース
 
 GitHub Actionsによる自動リリース:
 
-1. タグをプッシュ: `git tag v3.0.0 && git push --tags`
+1. タグをプッシュ: `git tag v1.0.0 && git push --tags`
 2. GitHub Actionsがビルドを実行
 3. 署名付きインストーラーがReleasesにアップロード
 4. `latest.json`が自動更新

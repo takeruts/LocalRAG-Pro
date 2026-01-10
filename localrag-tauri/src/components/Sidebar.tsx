@@ -1,12 +1,19 @@
-import type { IndexStats } from '../types';
+import type { IndexStats, SystemInfo } from '../types';
+
+type IndexPhase = 'loading' | 'splitting' | 'embedding' | 'storing';
 
 interface SidebarProps {
-  ollamaRunning: boolean;
+  ollamaRunning: boolean | null; // null = checking
+  ollamaInstalled: boolean | null; // null = checking
   folderPath: string | null;
   isIndexing: boolean;
   indexProgress: number;
   currentFile: string;
+  indexPhase: IndexPhase | null;
+  indexCurrent: number;
+  indexTotal: number;
   indexStats: IndexStats | null;
+  systemInfo: SystemInfo | null;
   llmModels: string[];
   embeddingModels: string[];
   currentLlmModel: string;
@@ -18,15 +25,34 @@ interface SidebarProps {
   onSetLlmModel: (model: string) => void;
   onSetEmbeddingModel: (model: string) => void;
   onCheckUpdates: () => void;
+  onShowSetupGuide: () => void;
+}
+
+function getPhaseLabel(phase: IndexPhase): { label: string; color: string } {
+  switch (phase) {
+    case 'loading':
+      return { label: 'Loading Files', color: 'text-blue-400' };
+    case 'splitting':
+      return { label: 'Splitting', color: 'text-purple-400' };
+    case 'embedding':
+      return { label: 'Embedding', color: 'text-yellow-400' };
+    case 'storing':
+      return { label: 'Storing', color: 'text-green-400' };
+  }
 }
 
 export function Sidebar({
   ollamaRunning,
+  ollamaInstalled,
   folderPath,
   isIndexing,
   indexProgress,
   currentFile,
+  indexPhase,
+  indexCurrent,
+  indexTotal,
   indexStats,
+  systemInfo,
   llmModels,
   embeddingModels,
   currentLlmModel,
@@ -38,6 +64,7 @@ export function Sidebar({
   onSetLlmModel,
   onSetEmbeddingModel,
   onCheckUpdates,
+  onShowSetupGuide,
 }: SidebarProps) {
   const shortenPath = (path: string, maxLen: number = 40) => {
     if (path.length <= maxLen) return path;
@@ -50,20 +77,70 @@ export function Sidebar({
     <div className="w-[360px] min-w-[300px] max-w-[500px] bg-bg-card p-4 flex flex-col gap-4 overflow-y-auto">
       {/* Title */}
       <div className="text-center py-2">
-        <h1 className="text-xl font-bold text-primary">LocalRAG Pro</h1>
-        <p className="text-xs text-text-muted">v3.0.0</p>
+        <h1 className="text-xl font-bold text-primary">CPURAG</h1>
+        <p className="text-xs text-text-muted">v1.0.0</p>
       </div>
 
-      {/* Ollama Status */}
-      <div className="flex items-center gap-2 p-2 bg-bg-main rounded-lg">
-        <div
-          className={`w-3 h-3 rounded-full ${
-            ollamaRunning ? 'bg-success' : 'bg-error'
-          }`}
-        />
-        <span className="text-sm text-text-secondary">
-          Ollama: {ollamaRunning ? 'Running' : 'Stopped'}
-        </span>
+      {/* CPU Info */}
+      {systemInfo && (
+        <div className="p-3 bg-bg-main rounded-lg">
+          <h3 className="text-sm font-medium text-text-primary mb-2">CPU Info</h3>
+          <div className="flex flex-col gap-1 text-xs">
+            {systemInfo.cpu_name && (
+              <p className="text-text-secondary truncate" title={systemInfo.cpu_name}>
+                {systemInfo.cpu_name}
+              </p>
+            )}
+            <div className="flex gap-4 text-text-muted">
+              {systemInfo.cpu_cores && (
+                <span>{systemInfo.cpu_cores} Cores</span>
+              )}
+              {systemInfo.cpu_frequency_mhz && (
+                <span>{(systemInfo.cpu_frequency_mhz / 1000).toFixed(2)} GHz</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Ollama Status - Fixed layout to prevent flickering */}
+      <div className="p-3 bg-bg-main rounded-lg">
+        <div className="flex items-center gap-2 h-5">
+          <div
+            className={`w-3 h-3 rounded-full flex-shrink-0 ${
+              ollamaInstalled === null || ollamaRunning === null
+                ? 'bg-text-muted animate-pulse'
+                : ollamaInstalled === false
+                  ? 'bg-warning'
+                  : ollamaRunning
+                    ? 'bg-success'
+                    : 'bg-error'
+            }`}
+          />
+          <span className="text-sm text-text-secondary">
+            Ollama: {
+              ollamaInstalled === null || ollamaRunning === null
+                ? 'Checking...'
+                : ollamaInstalled === false
+                  ? 'Not Installed'
+                  : ollamaRunning
+                    ? 'Running'
+                    : 'Stopped'
+            }
+          </span>
+        </div>
+        {/* Fixed height message area */}
+        <div className="h-6 mt-2 flex items-center">
+          <p className={`text-xs ${ollamaInstalled === true && ollamaRunning === false ? 'text-text-muted' : 'text-transparent'}`}>
+            Start: <code className="bg-bg-input px-1 rounded">ollama serve</code>
+          </p>
+        </div>
+        <button
+          onClick={onShowSetupGuide}
+          className="w-full px-2 py-1 text-text-muted rounded text-xs hover:bg-bg-input transition-colors text-left"
+        >
+          Setup Guide
+        </button>
       </div>
 
       {/* Model Selection */}
@@ -146,14 +223,63 @@ export function Sidebar({
 
       {/* Progress Bar */}
       {isIndexing && (
-        <div className="flex flex-col gap-2">
+        <div className="bg-bg-main p-3 rounded-lg flex flex-col gap-2">
+          {/* Phase indicator */}
+          {indexPhase && (
+            <div className="flex items-center justify-between">
+              <span className={`text-xs font-medium ${getPhaseLabel(indexPhase).color}`}>
+                {getPhaseLabel(indexPhase).label}
+              </span>
+              {indexTotal > 0 && (
+                <span className="text-xs text-text-muted">
+                  {indexCurrent} / {indexTotal}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Progress bar */}
           <div className="w-full h-2 bg-bg-input rounded-full overflow-hidden">
             <div
-              className="h-full bg-primary transition-all duration-300"
+              className={`h-full transition-all duration-300 ${
+                indexPhase === 'embedding' ? 'bg-yellow-500' :
+                indexPhase === 'storing' ? 'bg-green-500' :
+                indexPhase === 'splitting' ? 'bg-purple-500' :
+                'bg-primary'
+              }`}
               style={{ width: `${indexProgress * 100}%` }}
             />
           </div>
-          <p className="text-xs text-text-muted truncate">{currentFile}</p>
+
+          {/* Percentage and file info */}
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-text-muted truncate flex-1 mr-2">{currentFile}</p>
+            <span className="text-xs text-text-secondary font-mono">
+              {Math.round(indexProgress * 100)}%
+            </span>
+          </div>
+
+          {/* Phase steps indicator */}
+          <div className="flex items-center gap-1 mt-1">
+            {(['loading', 'splitting', 'embedding', 'storing'] as IndexPhase[]).map((phase, idx) => (
+              <div key={phase} className="flex items-center">
+                <div
+                  className={`w-2 h-2 rounded-full ${
+                    indexPhase === phase
+                      ? getPhaseLabel(phase).color.replace('text-', 'bg-')
+                      : phase === 'loading' && (indexPhase === 'splitting' || indexPhase === 'embedding' || indexPhase === 'storing')
+                        ? 'bg-success'
+                        : phase === 'splitting' && (indexPhase === 'embedding' || indexPhase === 'storing')
+                          ? 'bg-success'
+                          : phase === 'embedding' && indexPhase === 'storing'
+                            ? 'bg-success'
+                            : 'bg-bg-input'
+                  }`}
+                />
+                {idx < 3 && <div className="w-4 h-0.5 bg-bg-input" />}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

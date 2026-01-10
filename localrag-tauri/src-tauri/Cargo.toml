@@ -1,12 +1,12 @@
 [package]
-name = "localrag-pro"
-version = "3.0.0"
-description = "LocalRAG Pro - Local RAG Application"
+name = "cpurag"
+version = "1.0.0"
+description = "CPURAG - CPU-based Local RAG Application"
 authors = ["takeruts"]
 edition = "2021"
 
 [lib]
-name = "localrag_pro_lib"
+name = "cpurag_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [build-dependencies]
@@ -17,6 +17,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
+tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
@@ -27,6 +28,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # RAG Core from workspace
 rag-core = { path = "../../localrag-rust/crates/rag-core" }
+sysinfo = "0.37.2"
 
 [profile.release]
 panic = "abort"

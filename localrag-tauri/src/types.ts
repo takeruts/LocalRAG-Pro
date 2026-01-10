@@ -21,6 +21,9 @@ export interface IndexStats {
 export interface IndexProgress {
   progress: number;
   file: string;
+  phase?: 'loading' | 'splitting' | 'embedding' | 'storing';
+  current?: number;
+  total?: number;
 }
 
 export interface ModelsPayload {
@@ -31,4 +34,21 @@ export interface ModelsPayload {
 export interface CurrentModels {
   llm_model: string;
   embedding_model: string;
+}
+
+export interface OllamaStatusInfo {
+  installed: boolean;
+  running: boolean;
+  version: string | null;
+}
+
+export interface SystemInfo {
+  cpu_name: string | null;
+  cpu_cores: number | null;
+  cpu_frequency_mhz: number | null;
+}
+
+export interface FullSystemStatus {
+  ollama: OllamaStatusInfo;
+  system: SystemInfo;
 }

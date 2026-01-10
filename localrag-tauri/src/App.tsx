@@ -1,13 +1,19 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
+import { OllamaSetupGuide } from './components/OllamaSetupGuide';
 import { useBackend } from './hooks/useBackend';
 import { useUpdater } from './hooks/useUpdater';
-import type { Message, SourceInfo, IndexStats, IndexProgress, ModelsPayload } from './types';
+import type { Message, SourceInfo, IndexStats, IndexProgress, ModelsPayload, OllamaStatusInfo, SystemInfo } from './types';
 
 function App() {
-  // Ollama state
-  const [ollamaRunning, setOllamaRunning] = useState(false);
+  // Ollama state - null means "checking"
+  const [ollamaRunning, setOllamaRunning] = useState<boolean | null>(null);
+  const [ollamaInstalled, setOllamaInstalled] = useState<boolean | null>(null); // null = checking
+  const [showSetupGuide, setShowSetupGuide] = useState(false);
+
+  // System info state
+  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
 
   // Model state
   const [llmModels, setLlmModels] = useState<string[]>(['gemma3:4b']);
@@ -20,6 +26,9 @@ function App() {
   const [isIndexing, setIsIndexing] = useState(false);
   const [indexProgress, setIndexProgress] = useState(0);
   const [currentFile, setCurrentFile] = useState('');
+  const [indexPhase, setIndexPhase] = useState<'loading' | 'splitting' | 'embedding' | 'storing' | null>(null);
+  const [indexCurrent, setIndexCurrent] = useState(0);
+  const [indexTotal, setIndexTotal] = useState(0);
   const [indexStats, setIndexStats] = useState<IndexStats | null>(null);
 
   // Chat state
@@ -32,16 +41,47 @@ function App() {
   // Error state
   const [error, setError] = useState<string | null>(null);
 
+  // Ref to track indexing state for callbacks
+  const isIndexingRef = useRef(false);
+
   // Updater
   const { checkForUpdates, downloadAndInstall } = useUpdater();
 
+  // Keep ref in sync with state
+  useEffect(() => {
+    isIndexingRef.current = isIndexing;
+  }, [isIndexing]);
+
   // Backend callbacks
   const callbacks = useMemo(() => ({
-    onOllamaStatus: (status: boolean) => setOllamaRunning(status),
+    onOllamaStatus: (status: boolean) => {
+      // Skip Ollama status updates during indexing to prevent UI flickering
+      if (isIndexingRef.current) return;
+      setOllamaRunning(status);
+    },
+    onOllamaStatusInfo: (status: OllamaStatusInfo) => {
+      // Skip Ollama status updates during indexing to prevent UI flickering
+      if (isIndexingRef.current) return;
+      setOllamaInstalled(status.installed);
+      setOllamaRunning(status.running);
+      // Show setup guide if not installed (first time only)
+      if (!status.installed) {
+        setShowSetupGuide(true);
+      }
+    },
     onFolderSelected: (path: string) => setFolderPath(path),
     onIndexProgress: (progress: IndexProgress) => {
       setIndexProgress(progress.progress);
       setCurrentFile(progress.file);
+      if (progress.phase) {
+        setIndexPhase(progress.phase);
+      }
+      if (progress.current !== undefined) {
+        setIndexCurrent(progress.current);
+      }
+      if (progress.total !== undefined) {
+        setIndexTotal(progress.total);
+      }
     },
     onIndexStatsUpdate: (stats: IndexStats) => setIndexStats(stats),
     onIndexComplete: (stats: IndexStats) => {
@@ -49,11 +89,17 @@ function App() {
       setIsIndexing(false);
       setIndexProgress(0);
       setCurrentFile('');
+      setIndexPhase(null);
+      setIndexCurrent(0);
+      setIndexTotal(0);
     },
     onIndexingCancelled: () => {
       setIsIndexing(false);
       setIndexProgress(0);
       setCurrentFile('');
+      setIndexPhase(null);
+      setIndexCurrent(0);
+      setIndexTotal(0);
     },
     onQueryChunk: (chunk: string) => {
       setMessages((prev) => {
@@ -94,6 +140,13 @@ function App() {
       setCurrentEmbeddingModel(models.embedding_model);
     });
     backend.refreshModels();
+
+    // Get system info on startup (CPU info only, Ollama status comes from background checker)
+    backend.getSystemInfo().then((info) => {
+      setSystemInfo(info);
+    }).catch(() => {
+      // Ignore errors on startup
+    });
   }, [backend]);
 
   // Handlers
@@ -165,11 +218,16 @@ function App() {
 
       <Sidebar
         ollamaRunning={ollamaRunning}
+        ollamaInstalled={ollamaInstalled}
         folderPath={folderPath}
         isIndexing={isIndexing}
         indexProgress={indexProgress}
         currentFile={currentFile}
+        indexPhase={indexPhase}
+        indexCurrent={indexCurrent}
+        indexTotal={indexTotal}
         indexStats={indexStats}
+        systemInfo={systemInfo}
         llmModels={llmModels}
         embeddingModels={embeddingModels}
         currentLlmModel={currentLlmModel}
@@ -181,6 +239,7 @@ function App() {
         onSetLlmModel={handleSetLlmModel}
         onSetEmbeddingModel={handleSetEmbeddingModel}
         onCheckUpdates={handleCheckUpdates}
+        onShowSetupGuide={() => setShowSetupGuide(true)}
       />
 
       <ChatArea
@@ -192,6 +251,15 @@ function App() {
         onSendMessage={handleSendMessage}
         onToggleAgentMode={handleToggleAgentMode}
       />
+
+      {/* Ollama Setup Guide Modal */}
+      {showSetupGuide && (
+        <OllamaSetupGuide
+          onClose={() => setShowSetupGuide(false)}
+          systemInfo={systemInfo}
+          ollamaRunning={ollamaRunning}
+        />
+      )}
     </div>
   );
 }

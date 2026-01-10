@@ -1,10 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useCallback } from 'react';
-import type { IndexStats, IndexProgress, SourceInfo, ModelsPayload, CurrentModels } from '../types';
+import type { IndexStats, IndexProgress, SourceInfo, ModelsPayload, CurrentModels, OllamaStatusInfo, SystemInfo, FullSystemStatus } from '../types';
 
 export function useBackend(callbacks: {
   onOllamaStatus?: (status: boolean) => void;
+  onOllamaStatusInfo?: (status: OllamaStatusInfo) => void;
   onFolderSelected?: (path: string) => void;
   onIndexProgress?: (progress: IndexProgress) => void;
   onIndexStatsUpdate?: (stats: IndexStats) => void;
@@ -23,6 +24,13 @@ export function useBackend(callbacks: {
       if (callbacks.onOllamaStatus) {
         const unlisten = await listen<boolean>('ollama-status', (event) => {
           callbacks.onOllamaStatus!(event.payload);
+        });
+        unlisteners.push(unlisten);
+      }
+
+      if (callbacks.onOllamaStatusInfo) {
+        const unlisten = await listen<OllamaStatusInfo>('ollama-status-info', (event) => {
+          callbacks.onOllamaStatusInfo!(event.payload);
         });
         unlisteners.push(unlisten);
       }
@@ -141,6 +149,18 @@ export function useBackend(callbacks: {
     return await invoke<boolean>('check_ollama_status');
   }, []);
 
+  const checkOllamaStatusInfo = useCallback(async (): Promise<OllamaStatusInfo> => {
+    return await invoke<OllamaStatusInfo>('check_ollama_status_info');
+  }, []);
+
+  const getSystemInfo = useCallback(async (): Promise<SystemInfo> => {
+    return await invoke<SystemInfo>('get_system_info');
+  }, []);
+
+  const getFullSystemStatus = useCallback(async (): Promise<FullSystemStatus> => {
+    return await invoke<FullSystemStatus>('get_full_system_status');
+  }, []);
+
   return {
     selectFolder,
     startIndexing,
@@ -151,5 +171,8 @@ export function useBackend(callbacks: {
     setEmbeddingModel,
     getCurrentModels,
     checkOllamaStatus,
+    checkOllamaStatusInfo,
+    getSystemInfo,
+    getFullSystemStatus,
   };
 }
