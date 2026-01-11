@@ -1,20 +1,76 @@
 # Local RAG Pro: Secure Desktop Document Intelligence 🛡️🤖
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
-![Python: 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)
-![Rust: Supported](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
+![Tauri: v2](https://img.shields.io/badge/Tauri-v2-blue.svg)
+![Rust: 1.75+](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
 ![Ollama: Supported](https://img.shields.io/badge/Ollama-Supported-green.svg)
-![AI-Generated: Yes](https://img.shields.io/badge/AI--Generated-Code-blueviolet)
 
 **Local RAG Pro** は、機密情報を一切クラウドに送信することなく、PCローカル環境でPDFやOffice文書を解析・検索できる、プライバシー重視のデスクトップRAGシステムです。
 
 ---
 
-## 🦀 Rust Edition (推奨版)
+## 🚀 CPURAG - Tauri Edition（推奨版）
 
 ### 概要
 
-**Python版の10-20倍高速なRust実装**を提供します。完全なGUIアプリケーションとして、より高速で安定した動作を実現しています。
+**Tauri v2 + React + Rust** で構築されたモダンなデスクトップアプリケーション。高速なHNSWベクトル検索、美しいUI、自動更新機能を備えています。
+
+### 主な特徴
+
+- ⚡ **高速エンベディング**: バッチ処理・並列リクエストによる最適化（8チャンク×8並列）
+- 🔄 **差分インデックス**: 既にインデックス済みのファイルは自動スキップ
+- 📄 **関連ドキュメント表示**: RAG回答後にファイル名・フォルダ・ページ番号を表示
+- 🎨 **モダンUI**: React + TailwindCSSによる美しいインターフェース
+- 💻 **CPU情報表示**: サイドバーにCPUモデル、コア数、周波数を表示
+- 🔄 **自動更新**: Tauri Updaterによるアプリの自動更新
+- 🔒 **完全ローカル**: Ollama + HNSWによるオフラインRAG
+
+### インストール（Windows）
+
+1. **[Releases](https://github.com/takeruts/LocalRAG-Pro/releases)** から最新のインストーラーをダウンロード
+   - `CPURAG_x.x.x_x64_en-US.msi` (MSI) または
+   - `CPURAG_x.x.x_x64-setup.exe` (NSIS)
+
+2. **インストーラーを実行**
+
+3. **[Ollama](https://ollama.ai)をインストール**
+
+4. **必要なモデルをダウンロード**:
+   ```bash
+   ollama pull gemma3:4b
+   ollama pull bge-m3
+   ```
+
+5. **アプリを起動** - スタートメニューから「CPURAG」を起動
+
+### 技術スタック
+
+| カテゴリ | 技術 |
+|---------|------|
+| フレームワーク | Tauri v2 |
+| フロントエンド | React 18 + TypeScript |
+| スタイリング | TailwindCSS |
+| バックエンド | Rust (rag-core) |
+| LLM | Ollama |
+| ベクトルDB | HNSW (instant-distance) |
+| PDF処理 | pdfium |
+
+### データ保存場所
+
+- **インデックスデータ**: `%LOCALAPPDATA%\com.cpurag.app\vectordb_data\`
+- インデックスをリセットしたい場合は上記フォルダを削除してください
+
+### 詳細ドキュメント
+
+詳しくは [localrag-tauri/README.md](localrag-tauri/README.md) をご覧ください。
+
+---
+
+## 🦀 Rust Edition (egui版)
+
+### 概要
+
+**egui + Rust** で構築されたGUIアプリケーション。ChromaDBを使用したベクトル検索を提供します。
 
 ### 主な特徴
 
@@ -70,16 +126,6 @@
 - **LLM**: Ollama (gemma2:2b)
 - **Embedding**: Ollama (nomic-embed-text)
 - **Vector DB**: ChromaDB 1.4.0
-
-### 主な機能
-
-- ✅ **完全なGUI**: モダンなデスクトップアプリケーション
-- ✅ **リアルタイム進捗**: すべての処理段階で進捗を表示
-- ✅ **キャンセル対応**: 長時間処理を即座に停止
-- ✅ **バッチ最適化**: ChromaDBの5000件制限に自動対応
-- ✅ **タイムアウト対策**: 大量ドキュメントでも安定動作
-- ✅ **並列処理**: 5並列でEmbedding生成
-- ✅ **ストリーミング対応**: LLM回答のリアルタイム表示
 
 詳細は [RELEASE_NOTES.md](RELEASE_NOTES.md) をご覧ください。
 
@@ -546,98 +592,6 @@ git push
 
 ---
 
-## 🦀 Rust Edition (NEW!)
-
-### 概要
-
-Python版の10-20倍高速なRust実装を提供します。完全なGUIアプリケーションとして、より高速で安定した動作を実現しています。
-
-### 主な特徴
-
-- ⚡ **超高速処理**: Python版と比べて10-20倍の性能向上
-- 🎯 **リアルタイム進捗**: Embedding生成中の進捗をリアルタイム表示
-- ⏸️ **キャンセル機能**: 停止ボタンで処理を即座に中断可能
-- 🇯🇵 **日本語完全対応**: Windowsシステムフォント自動読み込み
-- 🔧 **最適化済み**: タイムアウト対策、バッチ分割、並列処理
-
-### パフォーマンス比較
-
-| 処理 | Python版 | Rust版 | 改善率 |
-|------|----------|--------|--------|
-| ドキュメント読み込み | ~2秒/ファイル | ~0.2秒/ファイル | **10倍** |
-| Embedding生成 | ~5秒/バッチ | ~1秒/バッチ | **5倍** |
-| メモリ使用量 | ~500MB | ~100MB | **5分の1** |
-| 起動時間 | ~5秒 | ~0.5秒 | **10倍** |
-
-### 技術スタック
-
-- **言語**: Rust 1.75+
-- **GUI**: eframe 0.30 + egui 0.30
-- **非同期ランタイム**: Tokio
-- **並列処理**: Rayon
-- **ドキュメント解析**: pdf-extract, docx-rs, calamine
-- **LLM**: Ollama (gemma2:2b)
-- **Embedding**: Ollama (nomic-embed-text)
-- **Vector DB**: ChromaDB 1.4.0
-
-### インストール・使用方法
-
-詳細は [RELEASE_NOTES.md](RELEASE_NOTES.md) をご覧ください。
-
-#### クイックスタート
-
-1. **配布パッケージをダウンロード**
-   ```bash
-   # dist/LocalRAG-Rust-v1.0.0.tar.gz (3.7MB)
-   tar -xzf LocalRAG-Rust-v1.0.0.tar.gz
-   cd LocalRAG-Release
-   ```
-
-2. **初回セットアップ**
-   ```bash
-   # Ollama モデルをインストール
-   ollama pull gemma2:2b
-   ollama pull nomic-embed-text
-
-   # Python環境セットアップ
-   setup.bat
-   ```
-
-3. **アプリケーション起動**
-   ```bash
-   # ワンクリック起動
-   Launch.bat
-   # または
-   起動.bat
-   ```
-
-### ソースからビルド
-
-```bash
-cd localrag-rust
-cargo build --release -p rag-gui
-```
-
-実行ファイルは `target/release/rag-gui.exe` に生成されます。
-
-### 主な機能
-
-- ✅ **完全なGUI**: モダンなデスクトップアプリケーション
-- ✅ **リアルタイム進捗**: すべての処理段階で進捗を表示
-- ✅ **キャンセル対応**: 長時間処理を即座に停止
-- ✅ **バッチ最適化**: ChromaDBの5000件制限に自動対応
-- ✅ **タイムアウト対策**: 大量ドキュメントでも安定動作
-- ✅ **並列処理**: 5並列でEmbedding生成
-- ✅ **ストリーミング対応**: LLM回答のリアルタイム表示
-
-### トラブルシューティング
-
-詳細なトラブルシューティングは配布パッケージ内の `README.txt` をご覧ください。
-
----
-
 ## 📜 License
 
 MIT License
-
-```
