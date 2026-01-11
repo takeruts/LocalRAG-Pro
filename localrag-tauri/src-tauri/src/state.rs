@@ -6,9 +6,9 @@ use tokio_util::sync::CancellationToken;
 use rag_core::{HnswClient, HnswConfig, OllamaClient, RagPipeline};
 
 pub const DEFAULT_LLM_MODEL: &str = "gemma3:4b";
-pub const DEFAULT_EMBEDDING_MODEL: &str = "nomic-embed-text";
+pub const DEFAULT_EMBEDDING_MODEL: &str = "bge-m3";
 pub const HNSW_COLLECTION_NAME: &str = "localrag_collection";
-pub const EMBEDDING_DIMENSION: usize = 768;
+pub const EMBEDDING_DIMENSION: usize = 1024;
 
 /// Application state managed by Tauri
 pub struct AppState {
@@ -18,6 +18,7 @@ pub struct AppState {
     pub folder_path: Arc<RwLock<Option<PathBuf>>>,
     pub cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub is_indexing: Arc<RwLock<bool>>,
+    pub data_dir: Arc<RwLock<PathBuf>>,
 }
 
 impl AppState {
@@ -29,11 +30,24 @@ impl AppState {
             folder_path: Arc::new(RwLock::new(None)),
             cancel_token: Arc::new(Mutex::new(None)),
             is_indexing: Arc::new(RwLock::new(false)),
+            data_dir: Arc::new(RwLock::new(PathBuf::from("vectordb_data"))),
         }
     }
 
+    pub fn set_data_dir(&self, path: PathBuf) {
+        // Use blocking write since this is called during init
+        let mut guard = self.data_dir.blocking_write();
+        *guard = path;
+    }
+
+    pub async fn get_hnsw_config(&self) -> HnswConfig {
+        let data_dir = self.data_dir.read().await.clone();
+        HnswConfig::new(HNSW_COLLECTION_NAME, EMBEDDING_DIMENSION)
+            .with_db_path(data_dir)
+    }
+
     pub async fn create_pipeline(&self) -> RagPipeline<HnswClient> {
-        let config = HnswConfig::new(HNSW_COLLECTION_NAME, EMBEDDING_DIMENSION);
+        let config = self.get_hnsw_config().await;
         let vector_db = HnswClient::new(config);
         let llm_model = self.llm_model.read().await.clone();
         let embedding_model = self.embedding_model.read().await.clone();
@@ -69,6 +83,9 @@ pub struct IndexStatsPayload {
 pub struct IndexProgressPayload {
     pub progress: f32,
     pub file: String,
+    pub phase: String,      // "loading", "splitting", "embedding", "storing"
+    pub current: usize,
+    pub total: usize,
 }
 
 /// Source info payload

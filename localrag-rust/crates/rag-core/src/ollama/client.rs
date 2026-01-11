@@ -16,11 +16,20 @@ pub struct OllamaClient {
 }
 
 impl OllamaClient {
-    /// 新しいクライアントを作成
+    /// 新しいクライアントを作成（高速化のためHTTPクライアントを最適化）
     pub fn new(base_url: impl Into<String>) -> Self {
+        // 接続プール・keep-alive・HTTP/2を有効化して高速化
+        let client = Client::builder()
+            .pool_max_idle_per_host(20)       // 接続プールサイズ増加
+            .pool_idle_timeout(Duration::from_secs(90))
+            .tcp_keepalive(Duration::from_secs(60))
+            .tcp_nodelay(true)                 // Nagleアルゴリズム無効化（低レイテンシ）
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
         Self {
             base_url: base_url.into(),
-            client: Client::new(),
+            client,
             timeout: Duration::from_secs(300), // 5分に延長
         }
     }
@@ -37,12 +46,14 @@ impl OllamaClient {
     }
 
     /// Ollamaが実行中かチェック
+    /// Note: Timeout increased to 5 seconds to accommodate slower GPU initialization
+    /// (especially Intel GPU with OLLAMA_INTEL_GPU=1)
     pub async fn check_running(&self) -> bool {
         let url = format!("{}/api/tags", self.base_url);
         match self
             .client
             .get(&url)
-            .timeout(Duration::from_secs(2))
+            .timeout(Duration::from_secs(5))
             .send()
             .await
         {
@@ -132,9 +143,12 @@ impl OllamaClient {
             })?;
 
         if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            tracing::error!("Embedding API error: status={}, body={}", status, error_body);
             return Err(RagError::OllamaApi(format!(
-                "Failed to generate embeddings: {}",
-                response.status()
+                "Failed to generate embeddings: {} - {}",
+                status, error_body
             )));
         }
 
@@ -221,23 +235,32 @@ impl OllamaClient {
             processed += chunk_len;
             // リアルタイムで進捗報告
             progress_callback(processed, total);
-            tracing::debug!("Embedding batch completed: {}/{}", processed, total);
+            tracing::info!("Embedding batch completed: {}/{}", processed, total);
         }
+
+        tracing::info!("All embedding batches received, sorting {} results", results.len());
 
         // インデックス順にソート
         results.sort_by_key(|(idx, _, _)| *idx);
 
+        tracing::info!("Results sorted, flattening {} batch results", results.len());
+
         // 結果を平坦化
         let mut all_embeddings = Vec::new();
-        for (_, _, result) in results {
+        for (batch_idx, (_, _, result)) in results.into_iter().enumerate() {
             match result {
                 Ok(embeddings) => {
+                    tracing::info!("Batch result {}: {} embeddings", batch_idx, embeddings.len());
                     all_embeddings.extend(embeddings);
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    tracing::error!("Batch result {} failed: {}", batch_idx, e);
+                    return Err(e);
+                }
             }
         }
 
+        tracing::info!("All embeddings flattened: {} total", all_embeddings.len());
         Ok(all_embeddings)
     }
 

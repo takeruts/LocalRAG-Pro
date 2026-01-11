@@ -74,7 +74,7 @@ export function Sidebar({
   };
 
   return (
-    <div className="w-[360px] min-w-[300px] max-w-[500px] bg-bg-card p-4 flex flex-col gap-4 overflow-y-auto">
+    <div className="w-[360px] min-w-[300px] max-w-[500px] bg-bg-card p-4 flex flex-col gap-4 overflow-y-auto min-h-0">
       {/* Title */}
       <div className="text-center py-2">
         <h1 className="text-xl font-bold text-primary">CPURAG</h1>

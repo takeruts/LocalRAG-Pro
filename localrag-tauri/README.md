@@ -10,6 +10,9 @@ CPURAG Tauri Editionは、ローカル環境で動作するRAG（Retrieval-Augme
 
 - **完全ローカル動作**: Ollama + HNSWによるオフラインRAG
 - **モダンUI**: React + TailwindCSSによる美しいインターフェース
+- **高速エンベディング**: バッチ処理・並列リクエストによる最適化
+- **差分インデックス**: 既にインデックス済みのファイルは自動スキップ
+- **関連ドキュメント表示**: RAG回答後にファイル名・フォルダ・ページ番号を表示
 - **CPU情報表示**: サイドバーにCPUモデル、コア数、周波数を表示
 - **自動更新**: Tauri Updaterによるアプリの自動更新
 - **クロスプラットフォーム**: Windows対応（macOS/Linux対応予定）
@@ -28,13 +31,33 @@ CPURAG Tauri Editionは、ローカル環境で動作するRAG（Retrieval-Augme
 | ベクトルDB | HNSW (instant-distance) |
 | システム情報 | sysinfo |
 
-## 必要条件
+## インストール（配布版）
+
+### Windows
+
+1. [Releases](https://github.com/takeruts/LocalRAG-Pro/releases)から最新のインストーラーをダウンロード
+   - `CPURAG_x.x.x_x64_en-US.msi` (MSI) または
+   - `CPURAG_x.x.x_x64-setup.exe` (NSIS)
+2. インストーラーを実行
+3. [Ollama](https://ollama.ai)をインストール
+4. 必要なモデルをダウンロード:
+   ```bash
+   ollama pull gemma3:4b
+   ollama pull bge-m3
+   ```
+
+### データ保存場所
+
+- **インデックスデータ**: `%LOCALAPPDATA%\com.cpurag.app\vectordb_data\`
+- インデックスをリセットしたい場合は上記フォルダを削除してください
+
+## 必要条件（開発）
 
 - **Node.js**: 18.0以上
 - **Rust**: 1.75以上
 - **Ollama**: インストール済み
 
-## セットアップ
+## セットアップ（開発）
 
 ### 1. 依存関係のインストール
 
@@ -47,7 +70,7 @@ npm install
 
 ```bash
 ollama pull gemma3:4b
-ollama pull nomic-embed-text
+ollama pull bge-m3
 ```
 
 ### 3. 開発サーバーの起動
@@ -113,13 +136,18 @@ localrag-tauri/
 - 対応フォーマット: PDF, DOCX, XLSX, TXT, MD
 - 差分インデックス（既存ファイルスキップ）
 - リアルタイム進捗表示（フェーズ別: Loading → Splitting → Embedding → Storing）
+- 高速バッチエンベディング（8チャンク×8並列リクエスト）
+- HTTP接続最適化（コネクションプーリング、TCP Keep-Alive）
 
 ### RAGクエリ
 
 - 自然言語での質問応答
 - ストリーミングレスポンス
-- ソースドキュメントの表示
-- 関連度スコアの表示
+- 関連ドキュメントの詳細表示
+  - ファイル名（大きく表示）
+  - フォルダパス
+  - ページ番号（PDFの場合）
+  - 関連度スコア（パーセント表示）
 
 ### モデル管理
 

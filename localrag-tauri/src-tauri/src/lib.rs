@@ -14,9 +14,26 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            // Initialize app state
+            // Initialize app state with app data directory
             let state = AppState::new();
+
+            // Set up data directory in app's local data folder
+            if let Some(app_data_dir) = app.path().app_local_data_dir().ok() {
+                let vectordb_path = app_data_dir.join("vectordb_data");
+                tracing::info!("Using vectordb path: {:?}", vectordb_path);
+
+                // Create directory if it doesn't exist
+                if let Err(e) = std::fs::create_dir_all(&vectordb_path) {
+                    tracing::warn!("Failed to create vectordb directory: {}", e);
+                }
+
+                state.set_data_dir(vectordb_path);
+            } else {
+                tracing::warn!("Could not get app data directory, using default");
+            }
+
             app.manage(state);
 
             // Start background tasks
@@ -43,6 +60,9 @@ pub fn run() {
             commands::models::set_embedding_model,
             commands::models::get_current_models,
             commands::models::check_ollama_status,
+            commands::models::check_ollama_status_info,
+            commands::models::get_system_info,
+            commands::models::get_full_system_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -137,8 +137,11 @@ impl HnswClient {
 
         tracing::info!("Loaded {} documents, rebuilding HNSW index...", persisted.documents.len());
 
-        // HNSWインデックスを再構築
-        let hnsw = Self::build_index(&persisted.documents);
+        // HNSWインデックスを再構築（CPUバウンド処理なのでspawn_blockingを使用）
+        let docs_for_index = persisted.documents.clone();
+        let hnsw = tokio::task::spawn_blocking(move || {
+            Self::build_index(&docs_for_index)
+        }).await.map_err(|e| RagError::VectorDb(format!("Failed to build index: {}", e)))?;
 
         let runtime_data = RuntimeData {
             hnsw,
@@ -151,33 +154,44 @@ impl HnswClient {
         Ok(())
     }
 
-    /// データを保存
+    /// データを保存（非同期・非ブロッキング）
     async fn save_data(&self) -> Result<()> {
-        let data = self.data.read().await;
-        let Some(ref runtime) = *data else {
-            return Ok(());
-        };
+        // ロックを短時間で解放するため、データをコピー
+        let persisted = {
+            let data = self.data.read().await;
+            let Some(ref runtime) = *data else {
+                return Ok(());
+            };
+            PersistedData {
+                documents: runtime.documents.clone(),
+            }
+        }; // ロック解放
 
         // ディレクトリを作成
-        if let Err(e) = fs::create_dir_all(&self.config.db_path) {
+        let db_path = self.config.db_path.clone();
+        if let Err(e) = fs::create_dir_all(&db_path) {
             tracing::warn!("Failed to create db directory: {}", e);
         }
 
         let path = self.config.data_file_path();
-        tracing::info!("Saving HNSW data to {:?}", path);
+        let doc_count = persisted.documents.len();
+        tracing::info!("Saving HNSW data to {:?} ({} documents)", path, doc_count);
 
-        let persisted = PersistedData {
-            documents: runtime.documents.clone(),
-        };
+        // ファイルI/Oをspawn_blockingで非同期化
+        let path_clone = path.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let file = File::create(&path_clone)
+                .map_err(|e| RagError::VectorDb(format!("Failed to create data file: {}", e)))?;
+            let writer = BufWriter::new(file);
 
-        let file = File::create(&path)
-            .map_err(|e| RagError::VectorDb(format!("Failed to create data file: {}", e)))?;
-        let writer = BufWriter::new(file);
+            bincode::serialize_into(writer, &persisted)
+                .map_err(|e| RagError::VectorDb(format!("Failed to serialize data: {}", e)))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| RagError::VectorDb(format!("Failed to save data: {}", e)))??;
 
-        bincode::serialize_into(writer, &persisted)
-            .map_err(|e| RagError::VectorDb(format!("Failed to serialize data: {}", e)))?;
-
-        tracing::info!("Saved {} documents to HNSW data file", runtime.documents.len());
+        tracing::info!("Saved {} documents to HNSW data file", doc_count);
         Ok(())
     }
 
@@ -241,11 +255,19 @@ impl VectorDatabase for HnswClient {
         // ドキュメントデータを作成
         let mut new_docs: Vec<DocumentData> = Vec::with_capacity(num_docs);
         for i in 0..num_docs {
+            let source = metadatas[i].get("source").cloned().unwrap_or_default();
+            let page = metadatas[i].get("page").cloned().unwrap_or_default();
+
+            // デバッグログ（最初の3件のみ）
+            if i < 3 {
+                tracing::info!("Doc {}: source='{}', page='{}'", i, source, page);
+            }
+
             new_docs.push(DocumentData {
                 id: ids[i].clone(),
                 document: documents[i].clone(),
-                source: metadatas[i].get("source").cloned().unwrap_or_default(),
-                page: metadatas[i].get("page").cloned().unwrap_or_default(),
+                source,
+                page,
                 vector: embeddings[i].clone(),
             });
         }
@@ -264,9 +286,19 @@ impl VectorDatabase for HnswClient {
 
         all_docs.extend(new_docs);
 
-        // HNSWインデックスを再構築
-        tracing::info!("Rebuilding HNSW index with {} total documents", all_docs.len());
-        let hnsw = Self::build_index(&all_docs);
+        // HNSWインデックスを再構築（CPUバウンド処理なのでspawn_blockingを使用）
+        let total_docs = all_docs.len();
+        tracing::info!("Rebuilding HNSW index with {} total documents", total_docs);
+
+        let docs_for_index = all_docs.clone();
+        let hnsw = tokio::task::spawn_blocking(move || {
+            tracing::info!("HNSW build_index started for {} documents", docs_for_index.len());
+            let result = Self::build_index(&docs_for_index);
+            tracing::info!("HNSW build_index completed");
+            result
+        }).await.map_err(|e| RagError::VectorDb(format!("Failed to build index: {}", e)))?;
+
+        tracing::info!("HNSW index rebuilt, updating data...");
 
         // データを更新
         *self.data.write().await = Some(RuntimeData {
@@ -274,10 +306,12 @@ impl VectorDatabase for HnswClient {
             documents: all_docs,
         });
 
+        tracing::info!("Saving HNSW data to disk...");
+
         // 保存
         self.save_data().await?;
 
-        tracing::info!("Added {} documents to HNSW index", num_docs);
+        tracing::info!("Added {} documents to HNSW index (total: {})", num_docs, total_docs);
         Ok(())
     }
 
@@ -303,7 +337,7 @@ impl VectorDatabase for HnswClient {
         let results: Vec<_> = runtime.hnsw.search(&query_point, &mut search).take(k).collect();
 
         let mut search_results = Vec::with_capacity(results.len());
-        for result in results {
+        for (idx, result) in results.iter().enumerate() {
             let doc_idx = *result.value;
             let doc = &runtime.documents[doc_idx];
             let mut metadata = HashMap::new();
@@ -314,6 +348,11 @@ impl VectorDatabase for HnswClient {
                 metadata.insert("page".to_string(), doc.page.clone());
             }
 
+            // デバッグログ
+            if idx < 3 {
+                tracing::info!("Query result {}: source='{}', page='{}'", idx, doc.source, doc.page);
+            }
+
             search_results.push(SearchResult::new(
                 doc.id.clone(),
                 doc.document.clone(),
@@ -322,7 +361,7 @@ impl VectorDatabase for HnswClient {
             ));
         }
 
-        tracing::debug!("Query returned {} results", search_results.len());
+        tracing::info!("Query returned {} results", search_results.len());
         Ok(search_results)
     }
 

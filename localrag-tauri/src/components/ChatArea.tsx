@@ -44,11 +44,11 @@ export function ChatArea({
   };
 
   return (
-    <div className="flex-1 flex flex-col bg-bg-main">
+    <div className="flex-1 flex flex-col bg-bg-main min-h-0 min-w-0">
       {/* Messages Area */}
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto p-4 flex flex-col gap-3"
+        className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 min-h-0"
       >
         {messages.map((msg, index) => (
           <MessageBubble

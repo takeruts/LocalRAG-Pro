@@ -114,9 +114,21 @@ impl<D: VectorDatabase> RagPipeline<D> {
 
         tracing::info!("Found {} already indexed sources", indexed_sources.len());
 
-        // 3. ファイルスキャン
+        // 3. ファイルスキャン - 開始を即座に通知
+        if let Some(tx) = &progress_tx {
+            let _ = tx.send(IndexProgress::Scanning { current: 0, total: 0 }).await;
+        }
+
         let loader = ParallelDocumentLoader::new();
         let all_files = loader.scan_directory(dir)?;
+
+        // スキャン完了を通知
+        if let Some(tx) = &progress_tx {
+            let _ = tx.send(IndexProgress::Scanning {
+                current: all_files.len(),
+                total: all_files.len()
+            }).await;
+        }
 
         stats.total_files = all_files.len();
 
@@ -211,38 +223,68 @@ impl<D: VectorDatabase> RagPipeline<D> {
                     .await;
             }
 
-            let splits = self.text_splitter.split_documents(documents);
-            stats.total_chunks += splits.len();
+            let raw_splits = self.text_splitter.split_documents(documents);
+            tracing::info!("Batch {}: Split into {} raw chunks", file_batch_idx + 1, raw_splits.len());
 
-            tracing::info!("Batch {}: Split into {} chunks", file_batch_idx + 1, splits.len());
+            // 6. Embedding生成
+            // nomic-embed-textのコンテキスト長は8192トークン
+            // 日本語は1文字≒2-3トークンなので、安全のため1000文字でトランケート
+            // 空のテキストはスキップする
+            const MAX_CHARS_PER_CHUNK: usize = 1000;
+
+            // 空でないチャンクのみをフィルタし、テキストをトランケート
+            let mut splits = Vec::new();
+            let mut texts = Vec::new();
+            for (idx, mut doc) in raw_splits.into_iter().enumerate() {
+                let trimmed = doc.content.trim();
+                if trimmed.is_empty() {
+                    tracing::warn!("Skipping empty chunk {}", idx);
+                    continue;
+                }
+
+                let char_count = trimmed.chars().count();
+                let text = if char_count > MAX_CHARS_PER_CHUNK {
+                    tracing::warn!("Truncating chunk {} from {} to {} chars", idx, char_count, MAX_CHARS_PER_CHUNK);
+                    trimmed.chars().take(MAX_CHARS_PER_CHUNK).collect::<String>()
+                } else {
+                    trimmed.to_string()
+                };
+
+                doc.content = text.clone();
+                splits.push(doc);
+                texts.push(text);
+            }
+
+            stats.total_chunks += splits.len();
+            let batch_texts_len = texts.len();
+
+            tracing::info!("Batch {}: {} valid chunks after filtering", file_batch_idx + 1, batch_texts_len);
 
             if splits.is_empty() {
                 continue;
             }
 
-            // 6. Embedding生成
-            let texts: Vec<String> = splits.iter().map(|d| d.content.clone()).collect();
-            let batch_texts_len = texts.len();
-
             tracing::info!("Batch {}: Generating embeddings for {} texts", file_batch_idx + 1, batch_texts_len);
-
-            if let Some(tx) = &progress_tx {
-                let _ = tx
-                    .send(IndexProgress::Embedding {
-                        current: batch_start,
-                        total: total_new_files,
-                    })
-                    .await;
-            }
 
             // 進捗チャネルを作成
             let (embed_progress_tx, mut embed_progress_rx) = tokio::sync::mpsc::channel::<(usize, usize)>(100);
+
+            // Embeddingフェーズ開始を通知（チャンク数ベース: 0/total_chunks）
+            let total_chunks_for_embed = texts.len();
+            if let Some(tx) = &progress_tx {
+                let _ = tx
+                    .send(IndexProgress::Embedding {
+                        current: 0,
+                        total: total_chunks_for_embed,
+                    })
+                    .await;
+            }
 
             // 進捗報告タスク
             let progress_tx_clone = progress_tx.clone();
             let progress_task = tokio::spawn(async move {
                 while let Some((current, total)) = embed_progress_rx.recv().await {
-                    tracing::debug!("Embedding progress: {}/{}", current, total);
+                    tracing::info!("Embedding progress: {}/{}", current, total);
                     if let Some(tx) = &progress_tx_clone {
                         let _ = tx.send(IndexProgress::Embedding { current, total }).await;
                     }
@@ -250,28 +292,38 @@ impl<D: VectorDatabase> RagPipeline<D> {
             });
 
             // Embedding生成
-            let embeddings = {
-                let embeddings = self
-                    .ollama_client
-                    .embed_batch_with_progress(
-                        &self.embedding_model,
-                        texts.clone(),
-                        30,  // バッチサイズ
-                        5,   // 並列数
-                        move |current, total| {
-                            let _ = embed_progress_tx.try_send((current, total));
-                        },
-                    )
-                    .await
-                    .map_err(|e| RagError::Embedding(format!("Failed to generate embeddings: {}", e)))?;
+            // バッチサイズ8、並列数8でバランスを取る
+            let embeddings = self
+                .ollama_client
+                .embed_batch_with_progress(
+                    &self.embedding_model,
+                    texts.clone(),
+                    8,   // バッチサイズ（8チャンクずつ - 安定性重視）
+                    8,   // 並列数（8同時リクエスト）
+                    move |current, total| {
+                        let _ = embed_progress_tx.try_send((current, total));
+                    },
+                )
+                .await
+                .map_err(|e| RagError::Embedding(format!("Failed to generate embeddings: {}", e)))?;
 
-                let _ = progress_task.await;
-                embeddings
-            };
+            // embed_progress_tx は move されてクロージャに渡されているので、
+            // embed_batch_with_progress 完了時に自動的にドロップされ、
+            // progress_task は正常に終了する
+            // (ただしタイムアウトを設けて確実に完了させる)
+            tracing::info!("Batch {}: Waiting for progress task to complete...", file_batch_idx + 1);
+            let timeout_result = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                progress_task
+            ).await;
+            match timeout_result {
+                Ok(_) => tracing::info!("Batch {}: Progress task completed normally", file_batch_idx + 1),
+                Err(_) => tracing::info!("Batch {}: Progress task timed out (continuing anyway)", file_batch_idx + 1),
+            }
 
             stats.total_embeddings += embeddings.len();
 
-            tracing::info!("Batch {}: Generated {} embeddings", file_batch_idx + 1, embeddings.len());
+            tracing::info!("Batch {}: Generated {} embeddings, proceeding to store", file_batch_idx + 1, embeddings.len());
 
             // 7. メタデータ準備
             let metadatas: Vec<_> = splits

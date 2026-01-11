@@ -214,7 +214,7 @@ pub async fn refresh_models(app: AppHandle) -> Result<(), String> {
     match ollama.list_models().await {
         Ok(models) => {
             // Separate models into LLM and embedding
-            let embedding_prefixes = ["nomic-embed", "mxbai-embed", "all-minilm", "snowflake-arctic-embed"];
+            let embedding_prefixes = ["nomic-embed", "mxbai-embed", "all-minilm", "snowflake-arctic-embed", "bge-"];
 
             let mut llm_models = Vec::new();
             let mut embedding_models = Vec::new();

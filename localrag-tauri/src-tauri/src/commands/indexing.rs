@@ -3,11 +3,9 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use rag_core::{HnswClient, HnswConfig, IndexProgress, VectorDatabase};
+use rag_core::{HnswClient, IndexProgress, VectorDatabase};
 
-use crate::state::{
-    AppState, IndexProgressPayload, IndexStatsPayload, EMBEDDING_DIMENSION, HNSW_COLLECTION_NAME,
-};
+use crate::state::{AppState, IndexProgressPayload, IndexStatsPayload};
 
 /// Select a folder using native dialog
 #[tauri::command]
@@ -46,7 +44,8 @@ pub async fn select_folder(app: AppHandle) -> Result<Option<String>, String> {
 pub async fn load_existing_index(app: AppHandle) {
     tracing::info!("Checking for existing index...");
 
-    let config = HnswConfig::new(HNSW_COLLECTION_NAME, EMBEDDING_DIMENSION);
+    let state = app.state::<AppState>();
+    let config = state.get_hnsw_config().await;
     let vector_db = HnswClient::new(config);
 
     match vector_db.count().await {
@@ -82,17 +81,22 @@ pub async fn load_existing_index(app: AppHandle) {
 /// Start indexing documents
 #[tauri::command]
 pub async fn start_indexing(app: AppHandle, folder: String) -> Result<(), String> {
+    tracing::info!("start_indexing called with folder: {}", folder);
     let state = app.state::<AppState>();
 
     // Check if already indexing
     if *state.is_indexing.read().await {
+        tracing::warn!("Already indexing, returning early");
         return Err("Already indexing".to_string());
     }
 
     let folder_path = PathBuf::from(&folder);
     if !folder_path.exists() {
+        tracing::error!("Folder does not exist: {}", folder);
         return Err("Folder does not exist".to_string());
     }
+
+    tracing::info!("Starting indexing for folder: {}", folder);
 
     // Set indexing flag
     *state.is_indexing.write().await = true;
@@ -102,7 +106,9 @@ pub async fn start_indexing(app: AppHandle, folder: String) -> Result<(), String
     *state.cancel_token.lock().await = Some(cancel_token.clone());
 
     // Create pipeline
+    tracing::info!("Creating pipeline...");
     let pipeline = state.create_pipeline().await;
+    tracing::info!("Pipeline created successfully");
 
     // Store pipeline
     *state.pipeline.lock().await = Some(pipeline);
@@ -121,6 +127,22 @@ pub async fn start_indexing(app: AppHandle, folder: String) -> Result<(), String
         let progress_task = tauri::async_runtime::spawn(async move {
             while let Some(progress) = progress_rx.recv().await {
                 match progress {
+                    IndexProgress::Scanning { current, total } => {
+                        let _ = app_for_progress.emit(
+                            "index-progress",
+                            IndexProgressPayload {
+                                progress: 0.0,
+                                file: if total == 0 {
+                                    "Scanning files...".to_string()
+                                } else {
+                                    format!("Found {} files", total)
+                                },
+                                phase: "loading".to_string(),
+                                current,
+                                total,
+                            },
+                        );
+                    }
                     IndexProgress::Loading { file, current, total } => {
                         let progress_pct = if total > 0 {
                             current as f32 / total as f32
@@ -133,6 +155,27 @@ pub async fn start_indexing(app: AppHandle, folder: String) -> Result<(), String
                             IndexProgressPayload {
                                 progress: progress_pct,
                                 file: file.display().to_string(),
+                                phase: "loading".to_string(),
+                                current,
+                                total,
+                            },
+                        );
+                    }
+                    IndexProgress::Splitting { current, total } => {
+                        let progress_pct = if total > 0 {
+                            current as f32 / total as f32
+                        } else {
+                            0.0
+                        };
+
+                        let _ = app_for_progress.emit(
+                            "index-progress",
+                            IndexProgressPayload {
+                                progress: progress_pct,
+                                file: "Splitting documents...".to_string(),
+                                phase: "splitting".to_string(),
+                                current,
+                                total,
                             },
                         );
                     }
@@ -147,7 +190,10 @@ pub async fn start_indexing(app: AppHandle, folder: String) -> Result<(), String
                             "index-progress",
                             IndexProgressPayload {
                                 progress: progress_pct,
-                                file: format!("Embedding: {}/{}", current, total),
+                                file: format!("{}/{} chunks", current, total),
+                                phase: "embedding".to_string(),
+                                current,
+                                total,
                             },
                         );
                     }
@@ -162,7 +208,10 @@ pub async fn start_indexing(app: AppHandle, folder: String) -> Result<(), String
                             "index-progress",
                             IndexProgressPayload {
                                 progress: progress_pct,
-                                file: format!("Storing: {}/{}", current, total),
+                                file: format!("{}/{} files", current, total),
+                                phase: "storing".to_string(),
+                                current,
+                                total,
                             },
                         );
                     }
@@ -179,7 +228,7 @@ pub async fn start_indexing(app: AppHandle, folder: String) -> Result<(), String
                             },
                         );
                     }
-                    IndexProgress::Complete { .. } | IndexProgress::Scanning { .. } | IndexProgress::Splitting { .. } => {}
+                    IndexProgress::Complete { .. } => {}
                 }
             }
         });
@@ -195,9 +244,10 @@ pub async fn start_indexing(app: AppHandle, folder: String) -> Result<(), String
                 result = pipeline.index_directory(&folder_path, Some(progress_tx)) => {
                     match result {
                         Ok(stats) => {
-                            // Get actual count from DB
-                            let db_count = pipeline.count().await.unwrap_or(stats.total_embeddings);
+                            tracing::info!("Indexing completed successfully: {} files, {} chunks", stats.indexed_files, stats.total_chunks);
 
+                            // Emit completion event immediately with stats from pipeline
+                            // (skip slow DB count query to avoid UI delay)
                             let _ = app_handle.emit(
                                 "index-complete",
                                 IndexStatsPayload {
@@ -205,12 +255,14 @@ pub async fn start_indexing(app: AppHandle, folder: String) -> Result<(), String
                                     indexed_files: stats.indexed_files,
                                     skipped_files: stats.skipped_files,
                                     total_chunks: stats.total_chunks,
-                                    total_embeddings: db_count,
+                                    total_embeddings: stats.total_embeddings,
                                     indexed_folder: Some(folder_clone),
                                 },
                             );
+                            tracing::info!("index-complete event emitted");
                         }
                         Err(e) => {
+                            tracing::error!("Indexing error: {}", e);
                             let _ = app_handle.emit("error", format!("Indexing error: {}", e));
                         }
                     }

@@ -1,11 +1,9 @@
 use tauri::{AppHandle, Emitter, Manager};
 use tokio_stream::StreamExt;
 
-use rag_core::{AgentPipeline, AgentProgress, HnswClient, HnswConfig, OllamaClient, RagPipeline};
+use rag_core::{AgentPipeline, AgentProgress, HnswClient, OllamaClient, RagPipeline};
 
-use crate::state::{
-    AppState, SourceInfo, EMBEDDING_DIMENSION, HNSW_COLLECTION_NAME,
-};
+use crate::state::{AppState, SourceInfo};
 
 /// Send a query to the RAG system
 #[tauri::command]
@@ -16,8 +14,8 @@ pub async fn send_query(
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
 
-    // Create independent pipeline for query
-    let config = HnswConfig::new(HNSW_COLLECTION_NAME, EMBEDDING_DIMENSION);
+    // Create independent pipeline for query using app's data directory
+    let config = state.get_hnsw_config().await;
     let vector_db = HnswClient::new(config);
 
     let llm_model = state.llm_model.read().await.clone();

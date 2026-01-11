@@ -17,9 +17,9 @@ function App() {
 
   // Model state
   const [llmModels, setLlmModels] = useState<string[]>(['gemma3:4b']);
-  const [embeddingModels, setEmbeddingModels] = useState<string[]>(['nomic-embed-text']);
+  const [embeddingModels, setEmbeddingModels] = useState<string[]>(['bge-m3']);
   const [currentLlmModel, setCurrentLlmModel] = useState('gemma3:4b');
-  const [currentEmbeddingModel, setCurrentEmbeddingModel] = useState('nomic-embed-text');
+  const [currentEmbeddingModel, setCurrentEmbeddingModel] = useState('bge-m3');
 
   // Index state
   const [folderPath, setFolderPath] = useState<string | null>(null);
@@ -121,7 +121,7 @@ function App() {
     onAgentProgress: (message: string) => setAgentProgress(message),
     onModelsRefreshed: (models: ModelsPayload) => {
       setLlmModels(models.llm_models.length > 0 ? models.llm_models : ['gemma3:4b']);
-      setEmbeddingModels(models.embedding_models.length > 0 ? models.embedding_models : ['nomic-embed-text']);
+      setEmbeddingModels(models.embedding_models.length > 0 ? models.embedding_models : ['bge-m3']);
     },
     onError: (err: string) => {
       setError(err);
