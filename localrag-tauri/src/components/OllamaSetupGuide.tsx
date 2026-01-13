@@ -1,4 +1,3 @@
-import { open } from '@tauri-apps/plugin-shell';
 import type { SystemInfo } from '../types';
 
 interface OllamaSetupGuideProps {
@@ -12,14 +11,6 @@ export function OllamaSetupGuide({
   systemInfo,
   ollamaRunning: _ollamaRunning
 }: OllamaSetupGuideProps) {
-  const handleOpenOllamaWebsite = async () => {
-    try {
-      await open('https://ollama.com/download');
-    } catch {
-      window.open('https://ollama.com/download', '_blank');
-    }
-  };
-
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-bg-card rounded-xl p-6 max-w-lg w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
@@ -64,16 +55,10 @@ export function OllamaSetupGuide({
                 1
               </span>
               <div>
-                <h3 className="font-medium text-text-primary mb-1">Download Ollama</h3>
-                <p className="text-sm text-text-muted mb-2">
-                  Download and install Ollama from the official website.
+                <h3 className="font-medium text-text-primary mb-1">Install Ollama</h3>
+                <p className="text-sm text-text-muted">
+                  This application requires Ollama to run local AI models. Please ensure Ollama is installed on your system before proceeding.
                 </p>
-                <button
-                  onClick={handleOpenOllamaWebsite}
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary-dim transition-colors"
-                >
-                  Open ollama.com/download
-                </button>
               </div>
             </div>
           </div>
