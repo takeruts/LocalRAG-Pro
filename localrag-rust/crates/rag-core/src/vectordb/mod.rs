@@ -43,6 +43,9 @@ pub trait VectorDatabase: Send + Sync {
     /// インデックス済みソースを取得（差分検出用）
     async fn get_indexed_sources(&self) -> Result<Vec<String>>;
 
+    /// ソースごとのチャンク数を取得
+    async fn get_chunk_counts_per_source(&self) -> Result<HashMap<String, usize>>;
+
     /// データベース統計情報
     async fn get_stats(&self) -> Result<VectorDbStats>;
 

@@ -13,7 +13,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             // Initialize app state with app data directory
@@ -54,6 +53,9 @@ pub fn run() {
             commands::indexing::select_folder,
             commands::indexing::start_indexing,
             commands::indexing::stop_indexing,
+            commands::indexing::get_index_stats,
+            commands::indexing::clear_index,
+            commands::indexing::analyze_index,
             commands::query::send_query,
             commands::models::refresh_models,
             commands::models::set_llm_model,

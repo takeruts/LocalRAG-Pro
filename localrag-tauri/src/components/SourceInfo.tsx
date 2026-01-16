@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { open } from '@tauri-apps/plugin-shell';
 import type { SourceInfo } from '../types';
 
 interface SourceInfoPanelProps {
@@ -22,6 +23,14 @@ function parseSourcePath(sourcePath: string): { fileName: string; folder: string
 
 export function SourceInfoPanel({ sources }: SourceInfoPanelProps) {
   const [isOpen, setIsOpen] = useState(true); // Default to open
+
+  const handleOpenFile = async (filePath: string) => {
+    try {
+      await open(filePath);
+    } catch (error) {
+      console.error('Failed to open file:', error);
+    }
+  };
 
   if (sources.length === 0) return null;
 
@@ -48,9 +57,13 @@ export function SourceInfoPanel({ sources }: SourceInfoPanelProps) {
                   <div className="flex-1 min-w-0">
                     {/* File name with page */}
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm text-text-primary font-medium truncate">
+                      <button
+                        onClick={() => handleOpenFile(source.source)}
+                        className="text-sm text-primary font-medium truncate hover:underline hover:text-primary/80 transition-colors text-left"
+                        title={`Open ${source.source}`}
+                      >
                         {fileName}
-                      </span>
+                      </button>
                       {source.page !== null && (
                         <span className="text-xs text-warning bg-warning/20 px-1.5 py-0.5 rounded">
                           Page {source.page + 1}

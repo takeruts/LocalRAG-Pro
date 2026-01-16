@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
 import { OllamaSetupGuide } from './components/OllamaSetupGuide';
+import { IndexAnalysisModal } from './components/IndexAnalysisModal';
 import { useBackend } from './hooks/useBackend';
-import { useUpdater } from './hooks/useUpdater';
-import type { Message, SourceInfo, IndexStats, IndexProgress, ModelsPayload, OllamaStatusInfo, SystemInfo } from './types';
+import type { Message, SourceInfo, IndexStats, IndexProgress, ModelsPayload, OllamaStatusInfo, SystemInfo, IndexAnalysis } from './types';
 
 function App() {
   // Ollama state - null means "checking"
@@ -41,11 +41,12 @@ function App() {
   // Error state
   const [error, setError] = useState<string | null>(null);
 
+  // Analysis modal state
+  const [showAnalysis, setShowAnalysis] = useState(false);
+  const [indexAnalysis, setIndexAnalysis] = useState<IndexAnalysis | null>(null);
+
   // Ref to track indexing state for callbacks
   const isIndexingRef = useRef(false);
-
-  // Updater
-  const { checkForUpdates, downloadAndInstall } = useUpdater();
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -85,15 +86,8 @@ function App() {
     },
     onIndexStatsUpdate: (stats: IndexStats) => setIndexStats(stats),
     onIndexComplete: (stats: IndexStats) => {
+      console.log('Index complete received:', stats);
       setIndexStats(stats);
-      setIsIndexing(false);
-      setIndexProgress(0);
-      setCurrentFile('');
-      setIndexPhase(null);
-      setIndexCurrent(0);
-      setIndexTotal(0);
-    },
-    onIndexingCancelled: () => {
       setIsIndexing(false);
       setIndexProgress(0);
       setCurrentFile('');
@@ -196,16 +190,23 @@ function App() {
     await backend.setEmbeddingModel(model);
   }, [backend]);
 
-  const handleCheckUpdates = useCallback(async () => {
-    const update = await checkForUpdates();
-    if (update) {
-      if (confirm(`Update ${update.version} available. Download and install?`)) {
-        await downloadAndInstall();
-      }
-    } else {
-      alert('No updates available.');
+  const handleRefreshStats = useCallback(async () => {
+    const stats = await backend.getIndexStats();
+    if (stats) {
+      setIndexStats(stats);
     }
-  }, [checkForUpdates, downloadAndInstall]);
+  }, [backend]);
+
+  const handleAnalyze = useCallback(async () => {
+    try {
+      const analysis = await backend.analyzeIndex();
+      setIndexAnalysis(analysis);
+      setShowAnalysis(true);
+    } catch (err) {
+      setError('Failed to analyze index');
+      setTimeout(() => setError(null), 5000);
+    }
+  }, [backend]);
 
   return (
     <div className="flex h-screen">
@@ -238,8 +239,9 @@ function App() {
         onRefreshModels={backend.refreshModels}
         onSetLlmModel={handleSetLlmModel}
         onSetEmbeddingModel={handleSetEmbeddingModel}
-        onCheckUpdates={handleCheckUpdates}
         onShowSetupGuide={() => setShowSetupGuide(true)}
+        onRefreshStats={handleRefreshStats}
+        onAnalyze={handleAnalyze}
       />
 
       <ChatArea
@@ -258,6 +260,14 @@ function App() {
           onClose={() => setShowSetupGuide(false)}
           systemInfo={systemInfo}
           ollamaRunning={ollamaRunning}
+        />
+      )}
+
+      {/* Index Analysis Modal */}
+      {showAnalysis && indexAnalysis && (
+        <IndexAnalysisModal
+          analysis={indexAnalysis}
+          onClose={() => setShowAnalysis(false)}
         />
       )}
     </div>

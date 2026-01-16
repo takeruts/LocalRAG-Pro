@@ -40,7 +40,8 @@ fn normalize_path(path: &Path) -> String {
 #[derive(Clone)]
 pub struct RagPipeline<D: VectorDatabase> {
     pub(crate) ollama_client: Arc<OllamaClient>,
-    pub(crate) vector_db: Arc<D>,
+    /// Vector database instance (public for stats access on cancellation)
+    pub vector_db: Arc<D>,
     pub(crate) text_splitter: RecursiveCharacterTextSplitter,
     pub embedding_model: String,
     pub llm_model: String,
@@ -159,9 +160,9 @@ impl<D: VectorDatabase> RagPipeline<D> {
 
         tracing::info!("Found {} new files to index", new_files.len());
 
-        // 100ファイルずつバッチ処理して即座にDBに保存
+        // 10ファイルずつバッチ処理して即座にDBに保存
         // これにより途中で停止しても処理済みファイルは保存される
-        const FILE_BATCH_SIZE: usize = 100;
+        const FILE_BATCH_SIZE: usize = 10;
         let total_new_files = new_files.len();
 
         for (file_batch_idx, file_chunk) in new_files.chunks(FILE_BATCH_SIZE).enumerate() {

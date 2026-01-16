@@ -24,8 +24,9 @@ interface SidebarProps {
   onRefreshModels: () => void;
   onSetLlmModel: (model: string) => void;
   onSetEmbeddingModel: (model: string) => void;
-  onCheckUpdates: () => void;
   onShowSetupGuide: () => void;
+  onRefreshStats: () => void;
+  onAnalyze: () => void;
 }
 
 function getPhaseLabel(phase: IndexPhase): { label: string; color: string } {
@@ -63,8 +64,9 @@ export function Sidebar({
   onRefreshModels,
   onSetLlmModel,
   onSetEmbeddingModel,
-  onCheckUpdates,
   onShowSetupGuide,
+  onRefreshStats,
+  onAnalyze,
 }: SidebarProps) {
   const shortenPath = (path: string, maxLen: number = 40) => {
     if (path.length <= maxLen) return path;
@@ -286,7 +288,25 @@ export function Sidebar({
       {/* Index Statistics */}
       {indexStats && (
         <div className="bg-bg-main p-3 rounded-lg flex flex-col gap-2">
-          <h3 className="text-sm font-medium text-text-primary">Index Statistics</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-text-primary">Index Statistics</h3>
+            <div className="flex gap-2">
+              <button
+                onClick={onAnalyze}
+                className="text-xs text-primary hover:text-primary-dim transition-colors"
+                title="Analyze indexed data"
+              >
+                Analyze
+              </button>
+              <button
+                onClick={onRefreshStats}
+                className="text-xs text-text-muted hover:text-text-secondary transition-colors"
+                title="Refresh statistics"
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
           {indexStats.indexed_folder && (
             <p className="text-xs text-primary truncate" title={indexStats.indexed_folder}>
               {shortenPath(indexStats.indexed_folder)}
@@ -315,14 +335,6 @@ export function Sidebar({
 
       {/* Spacer */}
       <div className="flex-1" />
-
-      {/* Update Check */}
-      <button
-        onClick={onCheckUpdates}
-        className="w-full p-2 bg-bg-input text-text-secondary rounded-lg text-xs hover:bg-bg-main transition-colors"
-      >
-        Check for Updates
-      </button>
     </div>
   );
 }

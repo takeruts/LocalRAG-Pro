@@ -241,6 +241,34 @@ impl VectorDatabase for ChromaClient {
         Ok(sources)
     }
 
+    async fn get_chunk_counts_per_source(&self) -> Result<HashMap<String, usize>> {
+        let collection_id = self.get_collection_id().await?;
+        let url = format!(
+            "{}/api/v1/collections/{}/get",
+            self.base_url, collection_id
+        );
+
+        let response = self.client.post(&url).json(&serde_json::json!({})).send().await?;
+
+        if !response.status().is_success() {
+            return Err(RagError::VectorDb(format!(
+                "Failed to get documents: {}",
+                response.status()
+            )));
+        }
+
+        let get_response: GetResponse = response.json().await?;
+
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for meta in &get_response.metadatas {
+            if let Some(source) = meta.get("source") {
+                *counts.entry(source.clone()).or_insert(0) += 1;
+            }
+        }
+
+        Ok(counts)
+    }
+
     async fn get_stats(&self) -> Result<VectorDbStats> {
         let count = self.count().await?;
 

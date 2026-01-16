@@ -383,6 +383,24 @@ impl VectorDatabase for HnswClient {
         Ok(sources.into_iter().collect())
     }
 
+    async fn get_chunk_counts_per_source(&self) -> Result<HashMap<String, usize>> {
+        self.ensure_loaded().await?;
+
+        let data = self.data.read().await;
+        let Some(ref runtime) = *data else {
+            return Ok(HashMap::new());
+        };
+
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for doc in &runtime.documents {
+            if !doc.source.is_empty() {
+                *counts.entry(doc.source.clone()).or_insert(0) += 1;
+            }
+        }
+
+        Ok(counts)
+    }
+
     async fn get_stats(&self) -> Result<VectorDbStats> {
         let count = self.count().await?;
         Ok(VectorDbStats {

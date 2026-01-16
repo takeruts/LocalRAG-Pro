@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useCallback } from 'react';
-import type { IndexStats, IndexProgress, SourceInfo, ModelsPayload, CurrentModels, OllamaStatusInfo, SystemInfo, FullSystemStatus } from '../types';
+import type { IndexStats, IndexProgress, SourceInfo, ModelsPayload, CurrentModels, OllamaStatusInfo, SystemInfo, FullSystemStatus, IndexAnalysis } from '../types';
 
 export function useBackend(callbacks: {
   onOllamaStatus?: (status: boolean) => void;
@@ -10,7 +10,6 @@ export function useBackend(callbacks: {
   onIndexProgress?: (progress: IndexProgress) => void;
   onIndexStatsUpdate?: (stats: IndexStats) => void;
   onIndexComplete?: (stats: IndexStats) => void;
-  onIndexingCancelled?: () => void;
   onQueryChunk?: (chunk: string) => void;
   onQueryComplete?: (sources: SourceInfo[]) => void;
   onAgentProgress?: (message: string) => void;
@@ -58,14 +57,8 @@ export function useBackend(callbacks: {
 
       if (callbacks.onIndexComplete) {
         const unlisten = await listen<IndexStats>('index-complete', (event) => {
+          console.log('index-complete event received:', event.payload);
           callbacks.onIndexComplete!(event.payload);
-        });
-        unlisteners.push(unlisten);
-      }
-
-      if (callbacks.onIndexingCancelled) {
-        const unlisten = await listen('indexing-cancelled', () => {
-          callbacks.onIndexingCancelled!();
         });
         unlisteners.push(unlisten);
       }
@@ -161,6 +154,18 @@ export function useBackend(callbacks: {
     return await invoke<FullSystemStatus>('get_full_system_status');
   }, []);
 
+  const getIndexStats = useCallback(async (): Promise<IndexStats | null> => {
+    return await invoke<IndexStats | null>('get_index_stats');
+  }, []);
+
+  const clearIndex = useCallback(async (): Promise<void> => {
+    await invoke('clear_index');
+  }, []);
+
+  const analyzeIndex = useCallback(async (): Promise<IndexAnalysis> => {
+    return await invoke<IndexAnalysis>('analyze_index');
+  }, []);
+
   return {
     selectFolder,
     startIndexing,
@@ -174,5 +179,8 @@ export function useBackend(callbacks: {
     checkOllamaStatusInfo,
     getSystemInfo,
     getFullSystemStatus,
+    getIndexStats,
+    clearIndex,
+    analyzeIndex,
   };
 }

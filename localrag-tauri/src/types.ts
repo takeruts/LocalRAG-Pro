@@ -52,3 +52,21 @@ export interface FullSystemStatus {
   ollama: OllamaStatusInfo;
   system: SystemInfo;
 }
+
+export interface FolderAnalysis {
+  folder: string;
+  file_count: number;
+  chunk_count: number;
+}
+
+export interface FileAnalysis {
+  path: string;
+  chunk_count: number;
+}
+
+export interface IndexAnalysis {
+  total_files: number;
+  total_chunks: number;
+  folders: FolderAnalysis[];
+  files: FileAnalysis[];
+}

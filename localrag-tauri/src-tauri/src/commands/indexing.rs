@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 use rag_core::{HnswClient, IndexProgress, VectorDatabase};
 
-use crate::state::{AppState, IndexProgressPayload, IndexStatsPayload};
+use crate::state::{AppState, FileAnalysis, FolderAnalysis, IndexAnalysisPayload, IndexProgressPayload, IndexStatsPayload};
 
 /// Select a folder using native dialog
 #[tauri::command]
@@ -115,6 +115,7 @@ pub async fn start_indexing(app: AppHandle, folder: String) -> Result<(), String
 
     let app_handle = app.clone();
     let folder_clone = folder.clone();
+    let folder_for_progress = folder.clone();
 
     tauri::async_runtime::spawn(async move {
         let state = app_handle.state::<AppState>();
@@ -224,7 +225,7 @@ pub async fn start_indexing(app: AppHandle, folder: String) -> Result<(), String
                                 skipped_files: stats.skipped_files,
                                 total_chunks: stats.total_chunks,
                                 total_embeddings: stats.total_embeddings,
-                                indexed_folder: None,
+                                indexed_folder: Some(folder_for_progress.clone()),
                             },
                         );
                     }
@@ -238,8 +239,44 @@ pub async fn start_indexing(app: AppHandle, folder: String) -> Result<(), String
         if let Some(pipeline) = &*pipeline_guard {
             tokio::select! {
                 _ = cancel_token.cancelled() => {
-                    tracing::info!("Indexing cancelled");
-                    let _ = app_handle.emit("indexing-cancelled", ());
+                    tracing::info!("Indexing cancelled - fetching stats from disk");
+
+                    // キャンセル時はディスクから統計を取得
+                    // （パイプラインのメモリ上のデータではなく、実際に保存されたデータを取得）
+                    let config = state.get_hnsw_config().await;
+                    let fresh_db = HnswClient::new(config);
+
+                    let (db_count, file_count, indexed_folder) = match fresh_db.count().await {
+                        Ok(count) => {
+                            tracing::info!("Cancelled - disk DB count: {}", count);
+                            let sources = fresh_db.get_indexed_sources().await.unwrap_or_default();
+                            let file_count = sources.len();
+                            let folder = derive_common_folder(&sources);
+                            tracing::info!("Cancelled - disk file count: {}, folder: {:?}", file_count, folder);
+                            (count, file_count, folder)
+                        }
+                        Err(e) => {
+                            tracing::warn!("Cancelled - failed to get disk DB count: {}", e);
+                            (0, 0, None)
+                        }
+                    };
+
+                    tracing::info!("Emitting index-complete with db_count={}, file_count={}", db_count, file_count);
+
+                    // 常にindex-completeを発行して統計情報を更新
+                    // indexed_folder はディスクのデータから取得、なければ元のフォルダを使用
+                    let emit_result = app_handle.emit(
+                        "index-complete",
+                        IndexStatsPayload {
+                            total_files: file_count,
+                            indexed_files: file_count,
+                            skipped_files: 0,
+                            total_chunks: db_count,
+                            total_embeddings: db_count,
+                            indexed_folder: indexed_folder.or_else(|| Some(folder_clone.clone())),
+                        },
+                    );
+                    tracing::info!("index-complete event emit result: {:?}", emit_result);
                 }
                 result = pipeline.index_directory(&folder_path, Some(progress_tx)) => {
                     match result {
@@ -294,6 +331,72 @@ pub async fn stop_indexing(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Clear all indexed data
+#[tauri::command]
+pub async fn clear_index(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+
+    // Check if indexing is in progress
+    if *state.is_indexing.read().await {
+        return Err("Cannot clear index while indexing is in progress".to_string());
+    }
+
+    let config = state.get_hnsw_config().await;
+    let vector_db = HnswClient::new(config);
+
+    vector_db
+        .delete_collection()
+        .await
+        .map_err(|e| format!("Failed to clear index: {}", e))?;
+
+    tracing::info!("Index cleared successfully");
+
+    // Emit event to update UI
+    let _ = app.emit("index-cleared", ());
+
+    Ok(())
+}
+
+/// Get current index statistics
+#[tauri::command]
+pub async fn get_index_stats(app: AppHandle) -> Result<Option<IndexStatsPayload>, String> {
+    tracing::info!("get_index_stats called");
+    let state = app.state::<AppState>();
+    let config = state.get_hnsw_config().await;
+    tracing::info!("get_index_stats: db_path={:?}", config.db_path);
+    let vector_db = HnswClient::new(config);
+
+    match vector_db.count().await {
+        Ok(count) => {
+            tracing::info!("get_index_stats: count={}", count);
+            let sources = vector_db.get_indexed_sources().await.unwrap_or_default();
+            let file_count = sources.len();
+            let indexed_folder = derive_common_folder(&sources);
+            tracing::info!("get_index_stats: file_count={}, indexed_folder={:?}", file_count, indexed_folder);
+
+            // count が0でも、以前インデックスがあった場合は統計を返す
+            // UIで「インデックスがない」ことを示すために None を返す
+            if count > 0 || file_count > 0 {
+                Ok(Some(IndexStatsPayload {
+                    total_files: file_count,
+                    indexed_files: file_count,
+                    skipped_files: 0,
+                    total_chunks: count,
+                    total_embeddings: count,
+                    indexed_folder,
+                }))
+            } else {
+                tracing::info!("get_index_stats: no documents found");
+                Ok(None)
+            }
+        }
+        Err(e) => {
+            tracing::error!("get_index_stats error: {}", e);
+            Err(format!("Failed to get index stats: {}", e))
+        }
+    }
+}
+
 /// Derive common folder from source paths
 fn derive_common_folder(sources: &[String]) -> Option<String> {
     if sources.is_empty() {
@@ -323,4 +426,76 @@ fn derive_common_folder(sources: &[String]) -> Option<String> {
     } else {
         Some(common.display().to_string())
     }
+}
+
+/// Analyze index contents
+#[tauri::command]
+pub async fn analyze_index(app: AppHandle) -> Result<IndexAnalysisPayload, String> {
+    use std::collections::HashMap;
+
+    tracing::info!("analyze_index called");
+    let state = app.state::<AppState>();
+    let config = state.get_hnsw_config().await;
+    let vector_db = HnswClient::new(config);
+
+    let sources = vector_db
+        .get_indexed_sources()
+        .await
+        .map_err(|e| format!("Failed to get indexed sources: {}", e))?;
+
+    // Count chunks per file
+    let chunk_counts = vector_db
+        .get_chunk_counts_per_source()
+        .await
+        .unwrap_or_default();
+
+    // Group by folder
+    let mut folder_map: HashMap<String, (usize, usize)> = HashMap::new(); // (file_count, chunk_count)
+    let mut file_analyses: Vec<FileAnalysis> = Vec::new();
+
+    for source in &sources {
+        let path = PathBuf::from(source);
+        let folder = path
+            .parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        let chunk_count = chunk_counts.get(source).copied().unwrap_or(0);
+
+        // Add to folder map
+        let entry = folder_map.entry(folder).or_insert((0, 0));
+        entry.0 += 1; // file count
+        entry.1 += chunk_count; // chunk count
+
+        // Add file analysis
+        file_analyses.push(FileAnalysis {
+            path: source.clone(),
+            chunk_count,
+        });
+    }
+
+    // Convert to folder analyses
+    let mut folders: Vec<FolderAnalysis> = folder_map
+        .into_iter()
+        .map(|(folder, (file_count, chunk_count))| FolderAnalysis {
+            folder,
+            file_count,
+            chunk_count,
+        })
+        .collect();
+
+    // Sort by file count descending
+    folders.sort_by(|a, b| b.file_count.cmp(&a.file_count));
+
+    // Sort files by path
+    file_analyses.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let total_chunks = vector_db.count().await.unwrap_or(0);
+
+    Ok(IndexAnalysisPayload {
+        total_files: sources.len(),
+        total_chunks,
+        folders,
+        files: file_analyses,
+    })
 }

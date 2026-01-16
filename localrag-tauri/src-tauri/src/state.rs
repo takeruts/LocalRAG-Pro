@@ -109,3 +109,27 @@ pub struct CurrentModelsPayload {
     pub llm_model: String,
     pub embedding_model: String,
 }
+
+/// Folder analysis info
+#[derive(Clone, serde::Serialize)]
+pub struct FolderAnalysis {
+    pub folder: String,
+    pub file_count: usize,
+    pub chunk_count: usize,
+}
+
+/// Index analysis payload
+#[derive(Clone, serde::Serialize)]
+pub struct IndexAnalysisPayload {
+    pub total_files: usize,
+    pub total_chunks: usize,
+    pub folders: Vec<FolderAnalysis>,
+    pub files: Vec<FileAnalysis>,
+}
+
+/// File analysis info
+#[derive(Clone, serde::Serialize)]
+pub struct FileAnalysis {
+    pub path: String,
+    pub chunk_count: usize,
+}
